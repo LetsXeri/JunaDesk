@@ -69,7 +69,8 @@ for package in "${!packages[@]}"; do
   if [[ ! -f "$sources/$source" ]]; then
     curl --fail --silent --show-error --location --retry 3 --max-time 180 "$mirror/sources/$source" -o "$sources/$source"
     curl --fail --silent --show-error --location --retry 3 --max-time 180 "$mirror/sources/$source.sig" -o "$sources/$source.sig"
-    pacman-key --verify "$sources/$source.sig" "$sources/$source"
+    # The MSYS2 public distribution keyring is sufficient to verify source archives.
+    gpgv --keyring /usr/share/pacman/keyrings/msys2.gpg "$sources/$source.sig" "$sources/$source"
   fi
   printf '%s %s %s\n' "$package" "$version" "$source" >> "$sources/msys2-packages.txt"
   notices="$output/licenses/$package"
