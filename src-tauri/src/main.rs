@@ -3,6 +3,8 @@
 mod media;
 mod model;
 mod platform;
+mod update_notifications;
+mod updates;
 
 use model::{Library, Observation, Playback, Result, Settings, Status};
 use serde::Serialize;
@@ -79,6 +81,39 @@ fn edit(store: &Store, change: impl FnOnce(&mut Library) -> Result<()>) -> Resul
 
 fn changed(app: &AppHandle) {
     let _ = app.emit("library-changed", ());
+}
+
+#[tauri::command]
+fn wallpaper_preview(store: State<'_, Arc<Store>>, id: String) -> Result<PathBuf> {
+    let library = store.library.lock().unwrap();
+    if !library.wallpapers.iter().any(|item| item.id == id) {
+        return Err("Das Wallpaper wurde nicht gefunden.".into());
+    }
+    let path = media::rendition(&store.media_root.join(id), None);
+    path.is_file().then_some(path).ok_or_else(|| {
+        "Die Vorschau-Datei fehlt. Importiere das Wallpaper bei Bedarf erneut.".into()
+    })
+}
+
+#[tauri::command]
+fn reveal_wallpaper(store: State<'_, Arc<Store>>, id: String) -> Result<()> {
+    let path = {
+        let library = store.library.lock().unwrap();
+        let item = library
+            .wallpapers
+            .iter()
+            .find(|item| item.id == id)
+            .ok_or("Das Wallpaper wurde nicht gefunden.")?;
+        store
+            .media_root
+            .join(id)
+            .join(format!("original.{}", item.extension))
+    };
+    if !path.is_file() {
+        return Err("Die verwaltete Datei wurde nicht gefunden.".into());
+    }
+    tauri_plugin_opener::reveal_item_in_dir(path)
+        .map_err(|_| "Die Datei konnte im Dateimanager nicht angezeigt werden.".into())
 }
 
 #[tauri::command]
@@ -300,6 +335,7 @@ fn desktop_loop(app: AppHandle, store: Arc<Store>, resources: PathBuf) {
         let manual_pause = store.manual_pause.load(Ordering::Acquire);
         let mut desired = BTreeMap::new();
         let mut pause_reasons = BTreeMap::new();
+        let mut ready_wallpapers = BTreeMap::new();
         {
             let library = store.library.lock().unwrap();
             for monitor in &observation.monitors {
@@ -322,19 +358,22 @@ fn desktop_loop(app: AppHandle, store: Arc<Store>, resources: PathBuf) {
                 if let Some(reason) = reason {
                     pause_reasons.insert(monitor.id.clone(), reason);
                 }
-                desired.insert(
-                    monitor.id.clone(),
-                    Playback {
-                        path: media::rendition(&store.media_root.join(id), library.settings.fps),
-                        paused: reason.is_some(),
-                    },
-                );
+                let target = Playback {
+                    path: media::rendition(&store.media_root.join(id), library.settings.fps),
+                    paused: reason.is_some(),
+                };
+                if observation.rendered.get(&monitor.id) == Some(&target) {
+                    ready_wallpapers.insert(monitor.id.clone(), id.clone());
+                }
+                desired.insert(monitor.id.clone(), target);
             }
         }
         let desktop_error = desktop.apply(&desired).err().or(observed_error);
         let status = Status {
             monitors: observation.monitors.clone(),
             on_battery: observation.on_battery,
+            has_battery: observation.has_battery,
+            ready_wallpapers,
             manual_pause,
             errors: observation.errors.clone(),
             pause_reasons,
@@ -383,12 +422,16 @@ fn cleanup_media(root: &Path, library: &Library) {
 
 fn main() {
     let background = std::env::args().any(|argument| argument == "--background");
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, arguments, _| {
+    let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(
+        |app, arguments, _| {
             if !arguments.iter().any(|argument| argument == "--background") {
                 show_window(app);
             }
-        }))
+        },
+    ));
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_notification::init());
+    let app = builder
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--background"]),
@@ -396,12 +439,18 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
+            wallpaper_preview,
+            reveal_wallpaper,
             import_wallpapers,
             rename_wallpaper,
             assign_wallpaper,
             delete_wallpaper,
             set_fps,
             set_option,
+            updates::get_update_status,
+            updates::check_updates,
+            updates::set_update_option,
+            updates::open_update_release,
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -423,6 +472,8 @@ fn main() {
                 status: Mutex::new(Status {
                     monitors: Vec::new(),
                     on_battery: false,
+                    has_battery: None,
+                    ready_wallpapers: BTreeMap::new(),
                     manual_pause: false,
                     errors: BTreeMap::new(),
                     pause_reasons: BTreeMap::new(),
@@ -434,10 +485,27 @@ fn main() {
                 worker: Mutex::new(None),
             });
             app.manage(store.clone());
+            let window_config = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|window| window.label == "main")
+                .ok_or("Fensterkonfiguration für JunaDesk fehlt.")?;
+            let mut window = tauri::WebviewWindowBuilder::from_config(app, window_config)?;
+            if !background {
+                // Give the first React render its startup state before any page script runs.
+                let launch_id = uuid::Uuid::new_v4();
+                window = window.initialization_script(format!(
+                    "if (window === window.top) window.__JUNADESK_STARTUP__ = '{launch_id}';"
+                ));
+            }
+            window.build()?;
             let open = MenuItem::with_id(app, "open", "Öffnen", true, None::<&str>)?;
             let pause = MenuItem::with_id(app, "pause", "Pause", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Beenden", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &pause, &quit])?;
+            let update = MenuItem::with_id(app, "updates", "Updates …", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &pause, &update, &quit])?;
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
                 .show_menu_on_left_click(cfg!(target_os = "macos"))
@@ -445,6 +513,7 @@ fn main() {
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "open" => show_window(app),
                     "pause" => toggle_pause(app, &pause),
+                    "updates" => updates::open_from_tray(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -472,6 +541,7 @@ fn main() {
                 tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
+            updates::init(app.handle(), &store.root, update);
             let desktop_app = app.handle().clone();
             let desktop_store = store.clone();
             *store.worker.lock().unwrap() = Some(thread::spawn(move || {

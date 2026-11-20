@@ -6,6 +6,12 @@ output="$PWD/src-tauri/resources"
 sources="$PWD/media-build/sources"
 mkdir -p "$output/licenses" "$sources"
 
+verification=$(mktemp -d)
+trap 'rm -rf -- "$verification"' EXIT
+# MSYS2 ships its distribution keys as ASCII armor. gpgv needs a binary keyring.
+keyring="$verification/msys2.gpg"
+gpg --batch --homedir "$verification" --dearmor --output "$keyring" /usr/share/pacman/keyrings/msys2.gpg
+
 mpv_release=0.42.0
 ffmpeg_release=9.1
 mpv=mingw-w64-ucrt-x86_64-mpv
@@ -66,11 +72,14 @@ for package in "${!packages[@]}"; do
   base=$(sed -n 's/^pkgbase = //p' <<< "$metadata")
   test -n "$base"
   source="$base-$filename_version.src.tar.zst"
-  if [[ ! -f "$sources/$source" ]]; then
-    curl --fail --silent --show-error --location --retry 3 --max-time 180 "$mirror/sources/$source" -o "$sources/$source"
-    curl --fail --silent --show-error --location --retry 3 --max-time 180 "$mirror/sources/$source.sig" -o "$sources/$source.sig"
-    # The MSYS2 public distribution keyring is sufficient to verify source archives.
-    gpgv --keyring /usr/share/pacman/keyrings/msys2.gpg "$sources/$source.sig" "$sources/$source"
+  printf 'Verifying source archive %s for %s\n' "$source" "$package"
+  if [[ ! -f "$sources/$source" || ! -f "$sources/$source.sig" ]]; then
+    curl --fail --silent --show-error --location --retry 3 --max-time 180 "$mirror/sources/$source" -o "$verification/$source"
+    curl --fail --silent --show-error --location --retry 3 --max-time 180 "$mirror/sources/$source.sig" -o "$verification/$source.sig"
+    gpgv --homedir "$verification" --keyring "$keyring" "$verification/$source.sig" "$verification/$source"
+    mv "$verification/$source" "$verification/$source.sig" "$sources/"
+  else
+    gpgv --homedir "$verification" --keyring "$keyring" "$sources/$source.sig" "$sources/$source"
   fi
   printf '%s %s %s\n' "$package" "$version" "$source" >> "$sources/msys2-packages.txt"
   notices="$output/licenses/$package"

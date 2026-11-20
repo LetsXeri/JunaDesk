@@ -8,8 +8,8 @@ JunaDesk bringt eigene animierte Wallpaper auf den Desktop von macOS und Windows
 
 | System | Datei | Installation |
 | --- | --- | --- |
-| macOS 14+ mit Apple Silicon | `JunaDesk-v0.1.0-macOS-arm64.dmg` | DMG öffnen, JunaDesk in **Programme** ziehen und von dort starten. |
-| Windows 11 ab 24H2 mit x64 | `JunaDesk-v0.1.0-Windows-x64.exe` | Setup öffnen und dem Installationsdialog folgen. |
+| macOS 14+ mit Apple Silicon | `JunaDesk-v0.1.1-macOS-arm64.dmg` | DMG öffnen, JunaDesk in **Programme** ziehen und von dort starten. |
+| Windows 11 ab 24H2 mit x64 | `JunaDesk-v0.1.1-Windows-x64.exe` | Setup öffnen und dem Installationsdialog folgen. |
 
 Die macOS-Preview ist ad hoc signiert und ohne Apple-Notarisierung. Gatekeeper kann den ersten Start blockieren. Für einen Download, dem du vertraust, erklärt Apple die Freigabe über **Systemeinstellungen → Datenschutz & Sicherheit**. Unter Windows kann SmartScreen beim unsignierten Installer warnen. Smart App Control kann die Ausführung abhängig von der Systemkonfiguration blockieren. [Apple Gatekeeper](https://support.apple.com/de-de/102445), [Microsoft SmartScreen und Smart App Control](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)
 
@@ -39,7 +39,11 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 
 Nach dem Vorbereiten der Werkzeuge startet `npm run tauri dev` die App. `npm run tauri build -- -- --locked` baut das Installationspaket des aktuellen Systems. Die Medienprogramme und Hinweise liegen in `src-tauri/resources`. Die vom Build erzeugten Medienquellen liegen in `media-build/sources`.
 
-## Preview veröffentlichen
+## Updates
+
+Unter **Einstellungen → Updates** findest du die installierte Version und die manuelle Prüfung. JunaDesk fragt standardmäßig einmal täglich die öffentliche GitHub-Schnittstelle nach einem stabilen Release ab. Du kannst die automatische Prüfung abschalten und Systembenachrichtigungen separat einschalten. Der Update-Hinweis führt zum manuellen Download auf GitHub.
+
+## Releases veröffentlichen
 
 Die Versionsnummer in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` und `src-tauri/tauri.conf.json` aktualisieren und einen passenden `v*`-Tag pushen. GitHub Actions erstellt einen Release-Entwurf mit beiden Installern, Medienquellen und Prüfsummen. Für einen vorhandenen Tag lässt sich **Prepare preview** bei Bedarf manuell starten. Die CI prüft den Build. Die Desktop-Integration wird anschließend mit den Installern aus dem Entwurf auf den Zielsystemen abgenommen.
 
@@ -47,7 +51,7 @@ Die Versionsnummer in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml
 - MP4, WebM und GIF zusammen mit einer fehlerhaften Datei importieren. Vorschau, Umbenennen und Löschen eines zugewiesenen Wallpapers prüfen.
 - Zwei Bildschirme mit gemischter Skalierung separat zuweisen. Ab- und Anstecken, Sleep/Wake, macOS-Spaces und Explorer-Neustart prüfen.
 - Vollbild und Akkubetrieb prüfen. Manuelle Pause muss beim Ende eines automatischen Pausengrunds bestehen bleiben. Schleifenübergänge, FPS-Limit und CPU-/GPU-Last aktiv und pausiert vergleichen.
-- Autostart bei der nächsten Anmeldung und Wiederherstellung der Zuweisungen prüfen. Beide Paketdateien und Medienquellarchive anhand der Prüfsummen kontrollieren. Nach der Abnahme den Entwurf als Preview veröffentlichen.
+- Autostart bei der nächsten Anmeldung und Wiederherstellung der Zuweisungen prüfen. Beide Paketdateien und Medienquellarchive anhand der Prüfsummen kontrollieren. Nach der Abnahme den Entwurf als Preview oder als stabile Veröffentlichung freigeben. Für einen stabilen Release **Set as a pre-release** deaktivieren und ihn als **Latest** markieren. Nur stabile Releases mit passenden Installern lösen einen Update-Hinweis aus.
 
 ## Lizenz
 

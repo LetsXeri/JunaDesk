@@ -107,10 +107,14 @@ pub struct Monitor {
 pub struct Observation {
     pub monitors: Vec<Monitor>,
     pub on_battery: bool,
+    #[serde(default)]
+    pub has_battery: Option<bool>,
+    #[serde(default)]
+    pub rendered: BTreeMap<String, Playback>,
     pub errors: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Playback {
     pub path: std::path::PathBuf,
     pub paused: bool,
@@ -121,6 +125,8 @@ pub struct Playback {
 pub struct Status {
     pub monitors: Vec<Monitor>,
     pub on_battery: bool,
+    pub has_battery: Option<bool>,
+    pub ready_wallpapers: BTreeMap<String, String>,
     pub manual_pause: bool,
     pub errors: BTreeMap<String, String>,
     pub pause_reasons: BTreeMap<String, &'static str>,

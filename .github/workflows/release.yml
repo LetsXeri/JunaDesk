@@ -82,6 +82,14 @@ jobs:
         name: Prepare Windows media tools and corresponding sources
         shell: msys2 {0}
         run: bash scripts/bundle-windows-player.sh
+      - if: runner.os == 'Windows'
+        name: Smoke test bundled mpv outside MSYS2
+        shell: pwsh
+        run: |
+          $player = Resolve-Path src-tauri/resources/mpv.exe
+          $video = Resolve-Path src-tauri/testdata/test-vp9.webm
+          $process = Start-Process -FilePath $player -ArgumentList "--no-config --vo=null --ao=null --frames=2 `"$video`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Bundled mpv exited with $($process.ExitCode)" }
       - name: Build installer
         run: npm run tauri build -- --target ${{ matrix.target }} -- --locked
       - name: Test packaged media tools
@@ -120,7 +128,15 @@ jobs:
           merge-multiple: true
       - name: Write SHA-256 checksums
         working-directory: release
-        run: sha256sum JunaDesk-* > SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          for platform in macOS-arm64 Windows-x64; do
+            test -s "JunaDesk-$RELEASE_TAG-$platform-Medienquellen.tar.gz"
+          done
+          test -s "JunaDesk-$RELEASE_TAG-macOS-arm64.dmg"
+          test -s "JunaDesk-$RELEASE_TAG-Windows-x64.exe"
+          sha256sum JunaDesk-* > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
       - name: Upload draft preview
         env:
           GH_TOKEN: ${{ github.token }}

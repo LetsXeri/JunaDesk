@@ -1,10 +1,11 @@
 import AppKit
 import AVFoundation
 import CoreGraphics
+import QuartzCore
 import IOKit.ps
 import Foundation
 
-struct Wallpaper: Decodable {
+struct Wallpaper: Codable {
     let path: String
     let paused: Bool
 }
@@ -27,6 +28,8 @@ struct Display: Encodable {
 struct Observation: Encodable {
     let monitors: [Display]
     let onBattery: Bool
+    let hasBattery: Bool?
+    let rendered: [String: Wallpaper]
     let errors: [String: String]
 }
 
@@ -35,15 +38,29 @@ final class WallpaperWindow: NSWindow {
     override var canBecomeMain: Bool { false }
 }
 
+private final class FrameClock: NSObject {
+    weak var surface: Surface?
+
+    @objc func refresh(_ link: CADisplayLink) {
+        surface?.render(at: link.targetTimestamp)
+    }
+}
+
 final class Surface {
     let window: NSWindow
     let player = AVQueuePlayer()
-    let layer: AVPlayerLayer
+    private let layer = AVSampleBufferDisplayLayer()
     let looper: AVPlayerLooper
     let path: String
     var paused = true
-    private var shown = false
+    private(set) var shown = false
     private var prerolled = false
+    private weak var renderedItem: AVPlayerItem?
+    private var outputs: [ObjectIdentifier: AVPlayerItemVideoOutput] = [:]
+    private var format: CMVideoFormatDescription?
+    private let frameClock = FrameClock()
+    private var displayLink: CADisplayLink?
+    private var flushing = false
 
     init(screen: NSScreen, path: String) {
         self.path = path
@@ -61,7 +78,6 @@ final class Surface {
         window.sharingType = .none
 
         player.isMuted = true
-        layer = AVPlayerLayer(player: player)
         layer.videoGravity = .resizeAspectFill
         layer.backgroundColor = NSColor.black.cgColor
         let view = NSView(frame: CGRect(origin: .zero, size: screen.frame.size))
@@ -71,6 +87,11 @@ final class Surface {
 
         let item = AVPlayerItem(url: URL(fileURLWithPath: path))
         looper = AVPlayerLooper(player: player, templateItem: item)
+        attachOutputs()
+        frameClock.surface = self
+        let link = screen.displayLink(target: frameClock, selector: #selector(FrameClock.refresh(_:)))
+        displayLink = link
+        link.add(to: .main, forMode: .common)
     }
 
     func update(frame: CGRect, paused: Bool) {
@@ -79,10 +100,6 @@ final class Surface {
             player.preroll(atRate: 1) { _ in }
         }
         if frame != window.frame { window.setFrame(frame, display: true) }
-        if !shown && layer.isReadyForDisplay {
-            window.orderFrontRegardless()
-            shown = true
-        }
         guard self.paused != paused else { return }
         self.paused = paused
         if paused {
@@ -91,6 +108,89 @@ final class Surface {
             player.cancelPendingPrerolls()
             player.play()
         }
+        displayLink?.isPaused = paused && shown
+    }
+
+    private func attachOutputs() {
+        // The looper copies the template item without copying its video output.
+        var items = looper.loopingPlayerItems
+        if let current = player.currentItem { items.append(current) }
+        let active = Set(items.map(ObjectIdentifier.init))
+        outputs = outputs.filter { active.contains($0.key) }
+
+        for item in items {
+            let id = ObjectIdentifier(item)
+            guard outputs[id] == nil else { continue }
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            ])
+            item.add(output)
+            outputs[id] = output
+        }
+    }
+
+    fileprivate func render(at hostTime: CFTimeInterval) {
+        let renderer = layer.sampleBufferRenderer
+        if !shown {
+            let ready: Bool
+            if #available(macOS 14.4, *) {
+                ready = layer.isReadyForDisplay
+            } else {
+                ready = renderer.status == .rendering
+            }
+            if ready {
+                window.orderFrontRegardless()
+                shown = true
+                if paused {
+                    displayLink?.isPaused = true
+                    return
+                }
+            }
+        }
+        guard let item = player.currentItem else { return }
+        if item !== renderedItem {
+            // Refresh outputs for the upcoming replicas at each item transition.
+            attachOutputs()
+            renderedItem = item
+        }
+        guard let output = outputs[ObjectIdentifier(item)] else { return }
+        if renderer.requiresFlushToResumeDecoding {
+            guard !flushing else { return }
+            flushing = true
+            renderer.flush(removingDisplayedImage: false) { [weak self] in
+                DispatchQueue.main.async { self?.flushing = false }
+            }
+            return
+        }
+        let itemTime = output.itemTime(forHostTime: hostTime)
+        guard !flushing, renderer.isReadyForMoreMediaData, itemTime.isNumeric,
+              output.hasNewPixelBuffer(forItemTime: itemTime),
+              let pixel = output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil)
+        else { return }
+
+        if format.map({ !CMVideoFormatDescriptionMatchesImageBuffer($0, imageBuffer: pixel) }) ?? true {
+            format = nil
+            guard CMVideoFormatDescriptionCreateForImageBuffer(
+                allocator: kCFAllocatorDefault, imageBuffer: pixel, formatDescriptionOut: &format
+            ) == noErr else { return }
+        }
+        guard let format else { return }
+        var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: itemTime, decodeTimeStamp: .invalid)
+        var sample: CMSampleBuffer?
+        guard CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: kCFAllocatorDefault, imageBuffer: pixel,
+            formatDescription: format, sampleTiming: &timing, sampleBufferOut: &sample
+        ) == noErr, let sample,
+              let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true)
+        else { return }
+        let attachment = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+        CFDictionarySetValue(
+            attachment, Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+            Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+        )
+        // Keep this layer and its last frame across item changes, even if the next
+        // decoder frame arrives a refresh later than the end of the previous item.
+        renderer.enqueue(sample)
     }
 
     var error: String? {
@@ -98,6 +198,7 @@ final class Surface {
     }
 
     deinit {
+        displayLink?.invalidate()
         player.cancelPendingPrerolls()
         player.pause()
         looper.disableLooping()
@@ -115,6 +216,7 @@ final class Desktop {
             [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
         ) as? [[String: Any]] ?? []
         var monitors: [Display] = []
+        var rendered: [String: Wallpaper] = [:]
         var errors: [String: String] = [:]
 
         for screen in NSScreen.screens {
@@ -146,6 +248,9 @@ final class Desktop {
                 surface.window.orderOut(nil)
             } else {
                 surface.update(frame: screen.frame, paused: wallpaper.paused)
+                if surface.shown && surface.window.isVisible {
+                    rendered[id] = Wallpaper(path: surface.path, paused: surface.paused)
+                }
             }
         }
         let connected = Set(monitors.map(\.id))
@@ -155,8 +260,15 @@ final class Desktop {
 
         let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue()
         let battery = snapshot.flatMap { IOPSGetProvidingPowerSourceType($0)?.takeUnretainedValue() as String? }
+        let hasBattery = snapshot.flatMap { info in
+            (IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef])?.contains { source in
+                let description = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any]
+                return description?[kIOPSTypeKey] as? String == kIOPSInternalBatteryType
+            }
+        }
         if let data = try? JSONEncoder().encode(Observation(
-            monitors: monitors, onBattery: battery == kIOPSBatteryPowerValue, errors: errors
+            monitors: monitors, onBattery: battery == kIOPSBatteryPowerValue, hasBattery: hasBattery,
+            rendered: rendered, errors: errors
         )) {
             FileHandle.standardOutput.write(data + Data([10]))
         }

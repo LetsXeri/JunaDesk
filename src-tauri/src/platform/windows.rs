@@ -83,12 +83,17 @@ impl Desktop {
             return Err("Windows meldet keine verfügbaren Bildschirme.".into());
         }
         let mut power: SYSTEM_POWER_STATUS = unsafe { zeroed() };
-        let on_battery =
-            unsafe { GetSystemPowerStatus(&mut power) != 0 } && power.ACLineStatus == 0;
+        let power_available = unsafe { GetSystemPowerStatus(&mut power) != 0 };
+        let on_battery = power_available && power.ACLineStatus == 0;
         Ok(Observation {
             monitors: self.monitors.clone(),
             on_battery,
+            has_battery: match (power_available, power.BatteryFlag) {
+                (false, _) | (_, 255) => None,
+                (_, flags) => Some(flags & 128 == 0),
+            },
             errors: self.errors.clone(),
+            ..Observation::default()
         })
     }
 
