@@ -2,6 +2,18 @@ name: Prepare preview
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+concurrency:
+  group: preview-${{ inputs.tag || github.ref_name }}
+
 permissions:
   contents: read
 
@@ -22,6 +34,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -30,7 +44,8 @@ jobs:
       - run: rustup target add ${{ matrix.target }}
       - run: npm ci
       - name: Check release version
-        run: node scripts/check-release-version.mjs
+        shell: bash
+        run: GITHUB_REF_NAME="$RELEASE_TAG" node scripts/check-release-version.mjs
       - if: runner.os == 'macOS'
         name: Build macOS media tools
         run: |
@@ -70,8 +85,8 @@ jobs:
           mkdir -p release
           installer=$(find "src-tauri/target/$TARGET/release/bundle" -type f -name "*.$EXTENSION" -print)
           test -f "$installer"
-          cp "$installer" "release/JunaDesk-$GITHUB_REF_NAME-$LABEL.$EXTENSION"
-          tar -czf "release/JunaDesk-$GITHUB_REF_NAME-$LABEL-Medienquellen.tar.gz" -C media-build/sources .
+          cp "$installer" "release/JunaDesk-$RELEASE_TAG-$LABEL.$EXTENSION"
+          tar -czf "release/JunaDesk-$RELEASE_TAG-$LABEL-Medienquellen.tar.gz" -C media-build/sources .
       - uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.label }}
@@ -85,6 +100,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
       - uses: actions/download-artifact@v7
         with:
           path: release
@@ -96,5 +113,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --draft --prerelease \
-            --title "JunaDesk $GITHUB_REF_NAME Preview" --notes-file .github/release-notes.md
+          set -euo pipefail
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            test "$draft" = true
+            gh release upload "$RELEASE_TAG" release/* --clobber
+          else
+            gh release create "$RELEASE_TAG" release/* --verify-tag --draft --prerelease \
+              --title "JunaDesk $RELEASE_TAG Preview" --notes-file .github/release-notes.md
+          fi
