@@ -101,7 +101,10 @@ jobs:
           $start = [System.Diagnostics.ProcessStartInfo]::new($player.Path)
           $start.UseShellExecute = $false
           $start.CreateNoWindow = $true
-          foreach ($argument in @('--no-config', '--msg-level=all=v', '--vo=null', '--ao=null', '--frames=2', "--log-file=$log", $video.Path)) {
+          # mpv.exe can default to idle GUI mode when started without a console.
+          $arguments = @('--no-config', '--idle=no', '--force-window=no', '--msg-level=all=v',
+                         '--vo=null', '--ao=null', '--frames=2', "--log-file=$log", $video.Path)
+          foreach ($argument in $arguments) {
             $start.ArgumentList.Add($argument)
           }
           $process = [System.Diagnostics.Process]::Start($start)
