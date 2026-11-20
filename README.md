@@ -41,7 +41,7 @@ Nach dem Vorbereiten der Werkzeuge startet `npm run tauri dev` die App. `npm run
 
 ## Preview veröffentlichen
 
-Die Versionsnummer in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` und `src-tauri/tauri.conf.json` aktualisieren und einen passenden `v*`-Tag pushen. GitHub Actions erstellt einen Release-Entwurf mit beiden Installern, Medienquellen und Prüfsummen. Die CI prüft den Build. Die Desktop-Integration wird anschließend mit den Installern aus dem Entwurf auf den Zielsystemen abgenommen.
+Die Versionsnummer in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` und `src-tauri/tauri.conf.json` aktualisieren und einen passenden `v*`-Tag pushen. GitHub Actions erstellt einen Release-Entwurf mit beiden Installern, Medienquellen und Prüfsummen. Für einen vorhandenen Tag lässt sich **Prepare preview** bei Bedarf manuell starten. Die CI prüft den Build. Die Desktop-Integration wird anschließend mit den Installern aus dem Entwurf auf den Zielsystemen abgenommen.
 
 - Systemhintergrund wiederherstellen können. Wallpaper hinter anklickbaren Icons und normalen Fenstern anzeigen. Verwaltung schließen, im Tray erneut öffnen und über **Beenden** vollständig stoppen.
 - MP4, WebM und GIF zusammen mit einer fehlerhaften Datei importieren. Vorschau, Umbenennen und Löschen eines zugewiesenen Wallpapers prüfen.

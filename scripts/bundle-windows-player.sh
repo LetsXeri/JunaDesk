@@ -7,7 +7,8 @@ sources="$PWD/media-build/sources"
 mkdir -p "$output/licenses" "$sources"
 
 mpv=mingw-w64-ucrt-x86_64-mpv
-version=0.42.0-2
+mpv_release=0.42.0
+version="$mpv_release-2"
 mirror=https://repo.msys2.org/mingw
 archive="$mpv-$version-any.pkg.tar.zst"
 if [[ $(pacman -Q "$mpv" 2>/dev/null || :) != "$mpv $version" ]]; then
@@ -57,7 +58,14 @@ for package in "${!packages[@]}"; do
     pacman-key --verify "$sources/$source.sig" "$sources/$source"
   fi
   printf '%s %s %s\n' "$package" "$version" "$source" >> "$sources/msys2-packages.txt"
-  mkdir -p "$output/licenses/$package"
+  notices="$output/licenses/$package"
+  mkdir -p "$notices"
+  grep -E '^(pkgname|pkgver|url|license) = ' <<< "$metadata" > "$notices/PACKAGE.txt"
+  if [[ $package == "$mpv" ]]; then
+    bsdtar -xOf "$sources/$source" "$base/mpv-$mpv_release.tar.gz" |
+      bsdtar -xf - -C "$notices" --strip-components=1 \
+        "mpv-$mpv_release/Copyright" "mpv-$mpv_release/LICENSE.GPL" "mpv-$mpv_release/LICENSE.LGPL"
+  fi
   while IFS= read -r license; do
     [[ ! -f $license ]] || cp "$license" "$output/licenses/$package/"
   done < <(pacman -Qlq "$package" | grep '/share/licenses/' || :)

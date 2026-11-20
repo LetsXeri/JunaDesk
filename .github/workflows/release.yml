@@ -36,6 +36,22 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - name: Check out media build recipes
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-recipes
+          sparse-checkout: scripts
+          persist-credentials: false
+      - name: Pin recipe and application revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p media-build/sources
+          cp release-recipes/scripts/{build-ffmpeg.sh,bundle-windows-player.sh,THIRD-PARTY.txt} scripts/
+          printf 'JunaDesk %s\nMedia build recipes %s\n' \
+            "$(git rev-parse HEAD)" "$(git -C release-recipes rev-parse HEAD)" > media-build/sources/REVISIONS.txt
       - uses: actions/setup-node@v6
         with:
           node-version: 24
