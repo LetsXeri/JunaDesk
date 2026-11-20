@@ -6,19 +6,29 @@ output="$PWD/src-tauri/resources"
 sources="$PWD/media-build/sources"
 mkdir -p "$output/licenses" "$sources"
 
-mpv=mingw-w64-ucrt-x86_64-mpv
 mpv_release=0.42.0
-version="$mpv_release-2"
+ffmpeg_release=9.1
+mpv=mingw-w64-ucrt-x86_64-mpv
+ffmpeg=mingw-w64-ucrt-x86_64-ffmpeg
 mirror=https://repo.msys2.org/mingw
-archive="$mpv-$version-any.pkg.tar.zst"
-if [[ $(pacman -Q "$mpv" 2>/dev/null || :) != "$mpv $version" ]]; then
-  pacman -U --noconfirm "$mirror/ucrt64/$archive"
+declare -A pinned=(["$mpv"]="$mpv_release-2" ["$ffmpeg"]="$ffmpeg_release-1")
+install=()
+for package in "$mpv" "$ffmpeg"; do
+  version=${pinned[$package]}
+  if [[ $(pacman -Q "$package" 2>/dev/null || :) != "$package $version" ]]; then
+    install+=("$mirror/ucrt64/$package-$version-any.pkg.tar.zst")
+  fi
+done
+if (("${#install[@]}")); then
+  pacman -U --noconfirm "${install[@]}"
 fi
-test "$(pacman -Q "$mpv")" = "$mpv $version"
+for package in "$mpv" "$ffmpeg"; do
+  test "$(pacman -Q "$package")" = "$package ${pinned[$package]}"
+done
 
 declare -A seen=()
 declare -A packages=()
-queue=(mpv.exe)
+queue=(mpv.exe ffmpeg.exe ffprobe.exe)
 while (("${#queue[@]}")); do
   name=${queue[0]}
   queue=("${queue[@]:1}")
@@ -39,22 +49,26 @@ for package in "${!packages[@]}"; do
   filename_version=${version#*:}
   shopt -s nullglob
   files=(/var/cache/pacman/pkg/"$package-$filename_version"-*.pkg.tar.zst)
-  if (("${#files[@]}" == 0)); then
+  if (("${#files[@]}" == 0)) && [[ -z ${pinned[$package]+x} ]]; then
     pacman -Sw --noconfirm "$package"
     files=(/var/cache/pacman/pkg/"$package-$filename_version"-*.pkg.tar.zst)
   fi
-  if (("${#files[@]}" == 0)) && [[ $package == "$mpv" ]]; then
-    curl --fail --silent --show-error --location "$mirror/ucrt64/$archive" -o "$sources/$archive"
-    files=("$sources/$archive")
+  if (("${#files[@]}" == 0)) && [[ -n ${pinned[$package]+x} ]]; then
+    archive="$package-$filename_version-any.pkg.tar.zst"
+    curl --fail --silent --show-error --location --max-time 180 "$mirror/ucrt64/$archive" -o "$output/$archive"
+    files=("$output/$archive")
   fi
   test "${#files[@]}" -eq 1
   metadata=$(bsdtar -xOf "${files[0]}" .PKGINFO)
+  if [[ ${files[0]} == "$output/"* ]]; then
+    rm -- "${files[0]}"
+  fi
   base=$(sed -n 's/^pkgbase = //p' <<< "$metadata")
   test -n "$base"
   source="$base-$filename_version.src.tar.zst"
   if [[ ! -f "$sources/$source" ]]; then
-    curl --fail --silent --show-error --location --retry 3 "$mirror/sources/$source" -o "$sources/$source"
-    curl --fail --silent --show-error --location --retry 3 "$mirror/sources/$source.sig" -o "$sources/$source.sig"
+    curl --fail --silent --show-error --location --retry 3 --max-time 180 "$mirror/sources/$source" -o "$sources/$source"
+    curl --fail --silent --show-error --location --retry 3 --max-time 180 "$mirror/sources/$source.sig" -o "$sources/$source.sig"
     pacman-key --verify "$sources/$source.sig" "$sources/$source"
   fi
   printf '%s %s %s\n' "$package" "$version" "$source" >> "$sources/msys2-packages.txt"
@@ -65,6 +79,11 @@ for package in "${!packages[@]}"; do
     bsdtar -xOf "$sources/$source" "$base/mpv-$mpv_release.tar.gz" |
       bsdtar -xf - -C "$notices" --strip-components=1 \
         "mpv-$mpv_release/Copyright" "mpv-$mpv_release/LICENSE.GPL" "mpv-$mpv_release/LICENSE.LGPL"
+  elif [[ $package == "$ffmpeg" ]]; then
+    bsdtar -xOf "$sources/$source" "$base/ffmpeg-$ffmpeg_release.tar.xz" |
+      bsdtar -xf - -C "$notices" --strip-components=1 \
+        "ffmpeg-$ffmpeg_release/COPYING.GPLv2" "ffmpeg-$ffmpeg_release/COPYING.GPLv3" \
+        "ffmpeg-$ffmpeg_release/COPYING.LGPLv2.1" "ffmpeg-$ffmpeg_release/LICENSE.md"
   fi
   while IFS= read -r license; do
     [[ ! -f $license ]] || cp "$license" "$output/licenses/$package/"
@@ -72,4 +91,7 @@ for package in "${!packages[@]}"; do
 done
 sort -u "$sources/msys2-packages.txt" -o "$sources/msys2-packages.txt"
 cp scripts/bundle-windows-player.sh "$sources/"
+cp scripts/THIRD-PARTY.txt "$output/"
+"$output/ffmpeg.exe" -hide_banner -encoders | grep libx264
+"$output/ffprobe.exe" -version
 "$output/mpv.exe" --version

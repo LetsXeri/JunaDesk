@@ -13,6 +13,7 @@ env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 concurrency:
   group: preview-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -74,18 +75,13 @@ jobs:
           msystem: UCRT64
           update: true
           install: >-
-            base-devel
             curl
             libarchive
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-binutils
       - if: runner.os == 'Windows'
         name: Prepare Windows media tools and corresponding sources
         shell: msys2 {0}
-        run: |
-          bash scripts/build-ffmpeg.sh
-          bash scripts/bundle-windows-player.sh
+        run: bash scripts/bundle-windows-player.sh
       - name: Build installer
         run: npm run tauri build -- --target ${{ matrix.target }} -- --locked
       - name: Test packaged media tools

@@ -35,7 +35,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 
 **macOS:** Mit Xcode, `pkg-config` und `npm run native:mac` den AppKit-Helfer erstellen. Im Entwicklungsmodus sucht JunaDesk nach FFmpeg und ffprobe auf dem PATH, wenn keine lokalen Binärdateien bereitliegen. `bash scripts/build-ffmpeg.sh` erstellt die mitgelieferte Version.
 
-**Windows:** In einer MSYS2-UCRT64-Shell mit `base-devel`, `curl`, `libarchive`, `mingw-w64-ucrt-x86_64-gcc`, `mingw-w64-ucrt-x86_64-pkgconf` und `mingw-w64-ucrt-x86_64-nasm` die Skripte `scripts/build-ffmpeg.sh` und `scripts/bundle-windows-player.sh` ausführen. JunaDesk selbst wird mit dem MSVC-Rust-Target gebaut.
+**Windows:** In einer MSYS2-UCRT64-Shell mit `curl`, `libarchive` und `mingw-w64-ucrt-x86_64-binutils` das Skript `scripts/bundle-windows-player.sh` ausführen. Es bündelt die festgelegten MSYS2-Versionen von FFmpeg, ffprobe und mpv mit den passenden Quellen. JunaDesk selbst wird mit dem MSVC-Rust-Target gebaut.
 
 Nach dem Vorbereiten der Werkzeuge startet `npm run tauri dev` die App. `npm run tauri build -- -- --locked` baut das Installationspaket des aktuellen Systems. Die Medienprogramme und Hinweise liegen in `src-tauri/resources`. Die vom Build erzeugten Medienquellen liegen in `media-build/sources`.
 
