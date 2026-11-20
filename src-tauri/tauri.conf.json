@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "JunaDesk",
+  "version": "0.1.0",
+  "identifier": "io.github.letsxeri.junadesk",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "JunaDesk",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 560,
+        "minHeight": 480,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost; style-src 'self'; connect-src ipc: http://ipc.localhost",
+      "assetProtocol": { "enable": true, "scope": ["$APPLOCALDATA/wallpapers/**"] }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "resources": { "resources/": "tools/" },
+    "icon": ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"]
+  }
+}

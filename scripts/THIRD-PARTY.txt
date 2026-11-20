@@ -1,0 +1,19 @@
+JunaDesk and its original code are licensed under the MIT License.
+
+The installer includes separate programs with their own licenses.
+See the licenses directory beside these programs.
+
+FFmpeg and ffprobe 8.1.3, built from the FFmpeg project with libx264 enabled
+and distributed under GPL-2.0-or-later. No patches to FFmpeg or x264.
+https://ffmpeg.org/
+https://code.videolan.org/videolan/x264
+
+The Windows installer additionally includes mpv 0.42.0 and the required
+runtime DLLs from MSYS2 UCRT64. The individual license notices accompany
+the binaries. The MSYS2 source packages include their recipes and patches.
+https://mpv.io/
+https://www.msys2.org/
+
+Download the matching source archives and build configuration from the
+same GitHub release as the installer:
+https://github.com/LetsXeri/JunaDesk/releases

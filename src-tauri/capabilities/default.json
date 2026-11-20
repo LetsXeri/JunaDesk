@@ -1,0 +1,6 @@
+{
+  "identifier": "main",
+  "description": "Verwaltungsfenster mit lokalem Dateiimport",
+  "windows": ["main"],
+  "permissions": ["core:event:default", "core:webview:default", "dialog:allow-open"]
+}
