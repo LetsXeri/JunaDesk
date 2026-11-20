@@ -85,10 +85,32 @@ jobs:
       - if: runner.os == 'Windows'
         name: Smoke test bundled mpv outside MSYS2
         shell: pwsh
+        timeout-minutes: 2
         run: |
+          Add-Type -TypeDefinition @'
+          using System.Runtime.InteropServices;
+          public static class WindowsErrorMode {
+              [DllImport("kernel32.dll")]
+              public static extern uint SetErrorMode(uint mode);
+          }
+          '@
+          [void][WindowsErrorMode]::SetErrorMode(0x8003)
           $player = Resolve-Path src-tauri/resources/mpv.exe
           $video = Resolve-Path src-tauri/testdata/test-vp9.webm
-          $process = Start-Process -FilePath $player -ArgumentList "--no-config --vo=null --ao=null --frames=2 `"$video`"" -Wait -PassThru
+          $log = Join-Path $env:RUNNER_TEMP 'junadesk-mpv-smoke.log'
+          $start = [System.Diagnostics.ProcessStartInfo]::new($player.Path)
+          $start.UseShellExecute = $false
+          $start.CreateNoWindow = $true
+          foreach ($argument in @('--no-config', '--msg-level=all=v', '--vo=null', '--ao=null', '--frames=2', "--log-file=$log", $video.Path)) {
+            $start.ArgumentList.Add($argument)
+          }
+          $process = [System.Diagnostics.Process]::Start($start)
+          if (-not $process.WaitForExit(30000)) {
+            $process.Kill($true)
+            if (Test-Path $log) { Get-Content $log -Tail 35 }
+            throw 'Bundled mpv did not exit within 30 seconds.'
+          }
+          if (Test-Path $log) { Get-Content $log -Tail 12 }
           if ($process.ExitCode -ne 0) { throw "Bundled mpv exited with $($process.ExitCode)" }
       - name: Build installer
         run: npm run tauri build -- --target ${{ matrix.target }} -- --locked
