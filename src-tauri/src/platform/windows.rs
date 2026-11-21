@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Stdio},
     ptr::{null, null_mut},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -210,34 +211,99 @@ unsafe fn desktop_host() -> Option<Host> {
     host
 }
 
+const SURFACE_CLASS: *const u16 = windows_sys::w!("JunaDeskWallpaperSurface");
+static SURFACE_CLASS_REGISTRATION: OnceLock<std::result::Result<(), u32>> = OnceLock::new();
+
+fn window_error(message: &str, code: u32) -> String {
+    format!("{message} (Win32-Fehler {code})")
+}
+
+fn create_surface_window(parent: HWND, layered: bool, width: i32, height: i32) -> Result<HWND> {
+    unsafe {
+        let instance = GetModuleHandleW(null());
+        SURFACE_CLASS_REGISTRATION
+            .get_or_init(|| {
+                // Layered windows are incompatible with CS_PARENTDC, CS_CLASSDC and CS_OWNDC.
+                let class = WNDCLASSW {
+                    lpfnWndProc: Some(DefWindowProcW),
+                    hInstance: instance,
+                    lpszClassName: SURFACE_CLASS,
+                    ..zeroed()
+                };
+                if RegisterClassW(&class) == 0 {
+                    Err(GetLastError())
+                } else {
+                    Ok(())
+                }
+            })
+            .map_err(|code| {
+                window_error(
+                    "Die Wiedergabefenster-Klasse konnte nicht registriert werden.",
+                    code,
+                )
+            })?;
+
+        // Explorer's window and its child must use compatible DPI awareness.
+        let parent_dpi = GetWindowDpiAwarenessContext(parent);
+        if parent_dpi.is_null() {
+            return Err(window_error(
+                "Die Explorer-Desktop-Ebene ist nicht verfügbar.",
+                GetLastError(),
+            ));
+        }
+        let previous_dpi = SetThreadDpiAwarenessContext(parent_dpi);
+        if previous_dpi.is_null() {
+            return Err(window_error(
+                "Der DPI-Modus des Desktop-Fensters konnte nicht übernommen werden.",
+                GetLastError(),
+            ));
+        }
+        let mut styles = WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
+        if layered {
+            styles |= WS_EX_LAYERED;
+        }
+        let hwnd = CreateWindowExW(
+            styles,
+            SURFACE_CLASS,
+            null(),
+            WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            0,
+            0,
+            width,
+            height,
+            parent,
+            null_mut(),
+            instance,
+            null(),
+        );
+        let creation_error = GetLastError();
+        SetThreadDpiAwarenessContext(previous_dpi);
+        if hwnd.is_null() {
+            return Err(window_error(
+                "Das Windows-Wiedergabefenster konnte nicht erstellt werden.",
+                creation_error,
+            ));
+        }
+        if layered && SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA) == 0 {
+            let code = GetLastError();
+            DestroyWindow(hwnd);
+            return Err(window_error(
+                "Die Wiedergabeebene konnte nicht eingerichtet werden.",
+                code,
+            ));
+        }
+        Ok(hwnd)
+    }
+}
+
 impl Surface {
     fn new(host: Host, monitor: &Monitor, video: &Playback, mpv: &Path) -> Result<Self> {
-        let mut ex = WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
-        if !host.icons.is_null() {
-            ex |= WS_EX_LAYERED;
-        }
-        let hwnd = unsafe {
-            CreateWindowExW(
-                ex,
-                wide("STATIC").as_ptr(),
-                null(),
-                WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
-                0,
-                0,
-                monitor.width as i32,
-                monitor.height as i32,
-                host.parent,
-                null_mut(),
-                GetModuleHandleW(null()),
-                null(),
-            )
-        };
-        if hwnd.is_null() {
-            return Err("Das Windows-Wiedergabefenster konnte nicht erstellt werden.".into());
-        }
-        if !host.icons.is_null() {
-            unsafe { SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA) };
-        }
+        let hwnd = create_surface_window(
+            host.parent,
+            !host.icons.is_null(),
+            monitor.width as i32,
+            monitor.height as i32,
+        )?;
         let result = Self::start_player(hwnd, video, mpv);
         if result.is_err() {
             unsafe { DestroyWindow(hwnd) };
@@ -370,6 +436,57 @@ impl Drop for Surface {
         let _ = self.child.kill();
         let _ = self.child.wait();
         unsafe { DestroyWindow(self.hwnd) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn creates_a_layered_child_in_the_parent_dpi_context() {
+        unsafe {
+            let original_dpi = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
+            assert!(!original_dpi.is_null());
+            let parent = CreateWindowExW(
+                0,
+                windows_sys::w!("STATIC"),
+                null(),
+                WS_POPUP,
+                0,
+                0,
+                320,
+                240,
+                null_mut(),
+                null_mut(),
+                GetModuleHandleW(null()),
+                null(),
+            );
+            assert!(!parent.is_null());
+            let previous = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            assert!(!previous.is_null());
+            let child = create_surface_window(parent, true, 320, 240)
+                .expect("a layered wallpaper child should be supported");
+            assert_eq!(GetParent(child), parent);
+            assert_ne!(GetWindowLongW(child, GWL_EXSTYLE) as u32 & WS_EX_LAYERED, 0);
+            assert_ne!(
+                AreDpiAwarenessContextsEqual(
+                    GetWindowDpiAwarenessContext(child),
+                    GetWindowDpiAwarenessContext(parent),
+                ),
+                0
+            );
+            assert_ne!(
+                AreDpiAwarenessContextsEqual(
+                    GetThreadDpiAwarenessContext(),
+                    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+                ),
+                0
+            );
+            DestroyWindow(child);
+            DestroyWindow(parent);
+            SetThreadDpiAwarenessContext(original_dpi);
+        }
     }
 }
 

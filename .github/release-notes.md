@@ -1,8 +1,10 @@
-## JunaDesk 0.1.1 Preview
+## JunaDesk 0.1.2 Preview
 
 Importiere animierte MP4-, WebM- und GIF-Dateien und weise sie deinen Bildschirmen zu. JunaDesk läuft über die Menüleiste oder den Infobereich weiter. Vollbild- und Akkupausen sowie Autostart lassen sich in den Einstellungen steuern.
 
 In dieser Preview:
+
+- Windows: JunaDesk erstellt das Wiedergabefenster mit einer eigenen Fensterklasse und übernimmt dabei den DPI-Modus von Explorer. Meldungen beim Einrichten der Desktop-Ebene enthalten den Win32-Fehlercode.
 
 - Kompaktere Bibliothek mit Suche, Sortierung und Videovorschau. Monitorzuweisungen und Wiedergabestatus sind pro Bildschirm sichtbar.
 - Ruhigere Startanimation beim sichtbaren Kaltstart. Unter macOS bleibt beim Video-Loop das letzte Bild sichtbar, bis das nächste bereitsteht.

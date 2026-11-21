@@ -8,8 +8,8 @@ JunaDesk bringt eigene animierte Wallpaper auf den Desktop von macOS und Windows
 
 | System | Datei | Installation |
 | --- | --- | --- |
-| macOS 14+ mit Apple Silicon | `JunaDesk-v0.1.1-macOS-arm64.dmg` | DMG öffnen, JunaDesk in **Programme** ziehen und von dort starten. |
-| Windows 11 ab 24H2 mit x64 | `JunaDesk-v0.1.1-Windows-x64.exe` | Setup öffnen und dem Installationsdialog folgen. |
+| macOS 14+ mit Apple Silicon | `JunaDesk-v0.1.2-macOS-arm64.dmg` | DMG öffnen, JunaDesk in **Programme** ziehen und von dort starten. |
+| Windows 11 ab 24H2 mit x64 | `JunaDesk-v0.1.2-Windows-x64.exe` | Setup öffnen und dem Installationsdialog folgen. |
 
 Die macOS-Preview ist ad hoc signiert und ohne Apple-Notarisierung. Gatekeeper kann den ersten Start blockieren. Für einen Download, dem du vertraust, erklärt Apple die Freigabe über **Systemeinstellungen → Datenschutz & Sicherheit**. Unter Windows kann SmartScreen beim unsignierten Installer warnen. Smart App Control kann die Ausführung abhängig von der Systemkonfiguration blockieren. [Apple Gatekeeper](https://support.apple.com/de-de/102445), [Microsoft SmartScreen und Smart App Control](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)
 
