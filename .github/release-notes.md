@@ -1,4 +1,4 @@
-## JunaDesk 0.1.4 Preview
+## JunaDesk 0.1.5 Preview
 
 Importiere animierte MP4-, WebM- und GIF-Dateien und weise sie deinen Bildschirmen zu. JunaDesk läuft über die Menüleiste oder den Infobereich weiter. Vollbild- und Akkupausen sowie Autostart lassen sich in den Einstellungen steuern.
 

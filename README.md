@@ -17,7 +17,7 @@ Die Release-Datei `SHA256SUMS.txt` enthält die SHA-256-Prüfsummen. Zum Abgleic
 
 **Windows-Update:** Beende JunaDesk über **Beenden** im Infobereich. Starte das neue Setup mit demselben Windows-Konto und wähle **Do not uninstall** (**Nicht deinstallieren**). Das Setup ersetzt die Programmdateien und erhält Bibliothek und Einstellungen.
 
-**Windows-Wiedergabe:** Seit v0.1.4 spielt JunaDesk Wallpaper über Windows Media Foundation ab. Für Windows 11 N wird das Media Feature Pack benötigt. FFmpeg und ffprobe werden weiterhin für den Import verwendet. [Media Feature Pack für Windows N](https://support.microsoft.com/help/3145500)
+**Windows-Wiedergabe:** Seit v0.1.5 spielt JunaDesk Wallpaper über Windows Media Foundation ab. Für Windows 11 N wird das Media Feature Pack benötigt. FFmpeg und ffprobe werden weiterhin für den Import verwendet. [Media Feature Pack für Windows N](https://support.microsoft.com/help/3145500)
 
 ## Verwendung
 

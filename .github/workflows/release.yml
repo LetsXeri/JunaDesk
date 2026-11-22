@@ -72,6 +72,13 @@ jobs:
       - name: Check release version
         shell: bash
         run: GITHUB_REF_NAME="$RELEASE_TAG" node scripts/check-release-version.mjs
+      - if: runner.os == 'Windows'
+        name: Test native Windows playback before packaging
+        shell: pwsh
+        run: |
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
+          cargo test --locked --manifest-path src-tauri/Cargo.toml native_player_loads_loops_and_pauses_an_h264_wallpaper
       - if: runner.os == 'Windows' && inputs.sign_windows
         name: Check Windows signing configuration
         shell: pwsh

@@ -1,11 +1,12 @@
 use crate::model::Result;
 use std::{
+    os::windows::ffi::OsStrExt,
     path::Path,
     thread,
     time::{Duration, Instant},
 };
 use windows::{
-    core::{implement, Interface, BSTR},
+    core::{implement, w, Interface, BSTR, PCWSTR},
     Win32::{
         Foundation::{HWND, RECT},
         Media::MediaFoundation::*,
@@ -72,9 +73,22 @@ pub(super) struct Player {
 
 impl Player {
     pub(super) fn new(hwnd: HWND, path: &Path) -> Result<Self> {
-        let url = url::Url::from_file_path(path)
-            .map_err(|_| "Der lokale Videopfad ist ungültig.".to_string())?;
+        let filename: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
         unsafe {
+            // Open the native path directly. A URL would reinterpret '#' and
+            // percent escapes before the local file resolver sees them.
+            let stream = MFCreateFile(
+                MF_ACCESSMODE_READ,
+                MF_OPENMODE_FAIL_IF_NOT_EXIST,
+                MF_FILEFLAGS_NONE,
+                PCWSTR(filename.as_ptr()),
+            )
+            .map_err(media_error)?;
+            if let Ok(metadata) = stream.cast::<IMFAttributes>() {
+                metadata
+                    .SetString(&MF_BYTESTREAM_CONTENT_TYPE, w!("video/mp4"))
+                    .map_err(media_error)?;
+            }
             let mut attributes = None;
             MFCreateAttributes(&mut attributes, 2).map_err(media_error)?;
             let attributes =
@@ -112,8 +126,9 @@ impl Player {
                 playback
                     .engine
                     .SetPreload(MF_MEDIA_ENGINE_PRELOAD_AUTOMATIC)?;
-                playback.engine.SetSource(&BSTR::from(url.as_str()))?;
-                playback.engine.Load()
+                playback
+                    .video
+                    .SetSourceFromByteStream(&stream, &BSTR::from("file:///wallpaper.mp4"))
             })()
             .map_err(media_error)?;
             Ok(playback)
