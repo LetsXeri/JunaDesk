@@ -1,36 +1,32 @@
-use crate::{
-    media,
-    model::{Monitor, Observation, Playback, Result},
-};
+#[path = "windows_media.rs"]
+mod windows_media;
+
+use crate::model::{Monitor, Observation, Playback, Result};
 use std::{
     collections::BTreeMap,
-    fs::OpenOptions,
-    io::Write,
     mem::{size_of, zeroed},
-    os::windows::io::AsRawHandle,
     path::{Path, PathBuf},
-    process::{Child, Stdio},
     ptr::{null, null_mut},
     sync::OnceLock,
     time::{Duration, Instant},
 };
-use uuid::Uuid;
+use windows_media::{MediaRuntime, Player};
 use windows_sys::Win32::{
     Devices::Display::*,
     Foundation::*,
     Graphics::{Dwm::*, Gdi::*},
-    System::{JobObjects::*, LibraryLoader::GetModuleHandleW, Power::*},
+    System::{LibraryLoader::GetModuleHandleW, Power::*},
     UI::{HiDpi::*, WindowsAndMessaging::*},
 };
 
 pub struct Desktop {
-    mpv: PathBuf,
     host: Option<Host>,
     surfaces: BTreeMap<String, Surface>,
     monitors: Vec<Monitor>,
     errors: BTreeMap<String, String>,
     retries: BTreeMap<String, (PathBuf, Instant)>,
     next_attach: Instant,
+    runtime: Result<MediaRuntime>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -40,13 +36,19 @@ struct Host {
 }
 
 struct Surface {
-    hwnd: HWND,
-    job: HANDLE,
-    child: Child,
-    pipe: String,
-    path: PathBuf,
-    paused: bool,
-    started: Instant,
+    player: Player,
+    window: SurfaceWindow,
+    video: Playback,
+    ready: bool,
+    visible: bool,
+}
+
+struct SurfaceWindow(HWND);
+
+impl Drop for SurfaceWindow {
+    fn drop(&mut self) {
+        unsafe { DestroyWindow(self.0) };
+    }
 }
 
 fn wide(text: &str) -> Vec<u16> {
@@ -58,16 +60,16 @@ fn string(wide: &[u16]) -> String {
 }
 
 impl Desktop {
-    pub fn new(resources: &Path) -> Self {
+    pub fn new(_resources: &Path) -> Self {
         unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
         Self {
-            mpv: media::binary(resources, "mpv"),
             host: None,
             surfaces: BTreeMap::new(),
             monitors: Vec::new(),
             errors: BTreeMap::new(),
             retries: BTreeMap::new(),
             next_attach: Instant::now(),
+            runtime: MediaRuntime::start(),
         }
     }
 
@@ -93,6 +95,12 @@ impl Desktop {
                 (false, _) | (_, 255) => None,
                 (_, flags) => Some(flags & 128 == 0),
             },
+            rendered: self
+                .surfaces
+                .iter()
+                .filter(|(_, surface)| surface.ready)
+                .map(|(id, surface)| (id.clone(), surface.video.clone()))
+                .collect(),
             errors: self.errors.clone(),
             ..Observation::default()
         })
@@ -104,11 +112,12 @@ impl Desktop {
         self.surfaces.retain(|id, surface| {
             desired
                 .get(id)
-                .is_some_and(|video| video.path == surface.path)
+                .is_some_and(|video| video.path == surface.video.path)
         });
         if desired.is_empty() {
             return Ok(());
         }
+        self.runtime.as_ref().map_err(Clone::clone)?;
         if self.host.is_some_and(|host| unsafe {
             IsWindow(host.parent) == 0 || (!host.icons.is_null() && IsWindow(host.icons) == 0)
         }) {
@@ -137,7 +146,7 @@ impl Desktop {
             let result = if let Some(surface) = self.surfaces.get_mut(&monitor.id) {
                 surface.update(host, monitor, video)
             } else {
-                Surface::new(host, monitor, video, &self.mpv).map(|surface| {
+                Surface::new(host, monitor, video).map(|surface| {
                     self.surfaces.insert(monitor.id.clone(), surface);
                 })
             };
@@ -297,111 +306,30 @@ fn create_surface_window(parent: HWND, layered: bool, width: i32, height: i32) -
 }
 
 impl Surface {
-    fn new(host: Host, monitor: &Monitor, video: &Playback, mpv: &Path) -> Result<Self> {
-        let hwnd = create_surface_window(
+    fn new(host: Host, monitor: &Monitor, video: &Playback) -> Result<Self> {
+        let window = SurfaceWindow(create_surface_window(
             host.parent,
             !host.icons.is_null(),
             monitor.width as i32,
             monitor.height as i32,
-        )?;
-        let result = Self::start_player(hwnd, video, mpv);
-        if result.is_err() {
-            unsafe { DestroyWindow(hwnd) };
-        }
-        result
-    }
-
-    fn start_player(hwnd: HWND, video: &Playback, mpv: &Path) -> Result<Self> {
-        let pipe = format!(r"\\.\pipe\junadesk-{}", Uuid::new_v4());
-        let mut child = media::command(mpv)
-            .args([
-                "--no-config",
-                "--no-terminal",
-                "--no-audio",
-                "--no-osc",
-                "--no-input-default-bindings",
-                "--no-input-vo-keyboard",
-                "--cursor-autohide=no",
-                "--stop-screensaver=no",
-                "--vo=gpu",
-                "--gpu-api=d3d11",
-                "--hwdec=auto",
-                "--loop-file=inf",
-                "--panscan=1.0",
-                "--no-border",
-                "--autoload-files=no",
-            ])
-            .arg(format!("--wid={}", hwnd as usize as u32))
-            .arg(format!("--input-ipc-server={pipe}"))
-            .arg(if video.paused {
-                "--pause=yes"
-            } else {
-                "--pause=no"
-            })
-            .arg("--")
-            .arg(&video.path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("mpv konnte nicht gestartet werden: {e}"))?;
-        let job = unsafe { CreateJobObjectW(null(), null()) };
-        let mut limit: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
-        limit.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        let managed = !job.is_null()
-            && unsafe {
-                SetInformationJobObject(
-                    job,
-                    JobObjectExtendedLimitInformation,
-                    &limit as *const _ as *const _,
-                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                ) != 0
-                    && AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) != 0
-            };
-        if !managed {
-            let _ = child.kill();
-            let _ = child.wait();
-            if !job.is_null() {
-                unsafe { CloseHandle(job) };
-            }
-            return Err("mpv konnte nicht an den JunaDesk-Prozess gebunden werden.".into());
-        }
-        Ok(Self {
-            hwnd,
-            job,
-            child,
-            pipe,
-            path: video.path.clone(),
-            paused: video.paused,
-            started: Instant::now(),
-        })
+        )?);
+        let player = Player::new(windows::Win32::Foundation::HWND(window.0), &video.path)?;
+        let mut surface = Self {
+            player,
+            window,
+            video: video.clone(),
+            ready: false,
+            visible: false,
+        };
+        surface.update(host, monitor, video)?;
+        Ok(surface)
     }
 
     fn update(&mut self, host: Host, monitor: &Monitor, video: &Playback) -> Result<()> {
-        if unsafe { IsWindow(self.hwnd) == 0 } || !matches!(self.child.try_wait(), Ok(None)) {
-            return Err("mpv hat die Wiedergabe unerwartet beendet.".into());
-        }
-        if self.paused != video.paused {
-            if let Ok(mut pipe) = OpenOptions::new().write(true).open(&self.pipe) {
-                if writeln!(
-                    pipe,
-                    "{{\"command\":[\"set_property\",\"pause\",{}]}}",
-                    video.paused
-                )
-                .is_ok()
-                {
-                    self.paused = video.paused;
-                }
-            }
-        }
         unsafe {
-            let ready = !GetWindow(self.hwnd, GW_CHILD).is_null();
-            if !ready {
-                return if self.started.elapsed() > Duration::from_secs(12) {
-                    Err("mpv konnte keine Videoausgabe erstellen.".into())
-                } else {
-                    Ok(())
-                };
+            let hwnd = self.window.0;
+            if IsWindow(hwnd) == 0 {
+                return Err("Windows hat das Wiedergabefenster geschlossen.".into());
             }
             let mut point = POINT {
                 x: monitor.x,
@@ -413,29 +341,24 @@ impl Surface {
             } else {
                 host.icons
             };
-            if SetWindowPos(
-                self.hwnd,
-                after,
-                point.x,
-                point.y,
-                monitor.width as i32,
-                monitor.height as i32,
-                SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            ) == 0
-            {
-                return Err("Die Explorer-Desktop-Ebene konnte nicht aktualisiert werden.".into());
+            let (width, height) = (monitor.width as i32, monitor.height as i32);
+            self.ready = self.player.update(video.paused, width, height)?;
+            self.video.paused = video.paused;
+            let flags = SWP_NOACTIVATE
+                | if self.ready && !self.visible {
+                    SWP_SHOWWINDOW
+                } else {
+                    0
+                };
+            if SetWindowPos(hwnd, after, point.x, point.y, width, height, flags) == 0 {
+                return Err(window_error(
+                    "Die Explorer-Desktop-Ebene konnte nicht aktualisiert werden.",
+                    GetLastError(),
+                ));
             }
+            self.visible |= self.ready;
         }
         Ok(())
-    }
-}
-
-impl Drop for Surface {
-    fn drop(&mut self) {
-        unsafe { CloseHandle(self.job) };
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        unsafe { DestroyWindow(self.hwnd) };
     }
 }
 

@@ -421,6 +421,15 @@ fn cleanup_media(root: &Path, library: &Library) {
 }
 
 fn main() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Diagnostics::Debug::{
+            GetErrorMode, SetErrorMode, SEM_FAILCRITICALERRORS,
+        };
+        // Let the media processes report loader failures as exit codes.
+        unsafe { SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS) };
+    }
+
     let background = std::env::args().any(|argument| argument == "--background");
     let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(
         |app, arguments, _| {

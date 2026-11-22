@@ -2106,7 +2106,7 @@ dependencies = [
 
 [[package]]
 name = "junadesk"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "block2",
  "objc2",
@@ -2125,7 +2125,10 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "tokio",
+ "url",
  "uuid",
+ "windows",
+ "windows-core",
  "windows-sys 0.59.0",
 ]
 

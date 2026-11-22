@@ -8,9 +8,14 @@ on:
         description: Existing version tag to build
         required: true
         type: string
+      sign_windows:
+        description: Sign the Windows installer with the configured Azure profile
+        default: false
+        type: boolean
 
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  SIGN_WINDOWS: ${{ inputs.sign_windows || false }}
 concurrency:
   group: preview-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: true
@@ -20,6 +25,10 @@ permissions:
 
 jobs:
   installer:
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -50,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p media-build/sources
-          cp release-recipes/scripts/{build-ffmpeg.sh,bundle-windows-player.sh,THIRD-PARTY.txt} scripts/
+          cp release-recipes/scripts/{build-ffmpeg.sh,THIRD-PARTY.txt} scripts/
           printf 'JunaDesk %s\nMedia build recipes %s\n' \
             "$(git rev-parse HEAD)" "$(git -C release-recipes rev-parse HEAD)" > media-build/sources/REVISIONS.txt
       - uses: actions/setup-node@v6
@@ -63,6 +72,21 @@ jobs:
       - name: Check release version
         shell: bash
         run: GITHUB_REF_NAME="$RELEASE_TAG" node scripts/check-release-version.mjs
+      - if: runner.os == 'Windows' && inputs.sign_windows
+        name: Check Windows signing configuration
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          SIGNING_ENDPOINT: ${{ vars.SIGNING_ENDPOINT }}
+          SIGNING_ACCOUNT: ${{ vars.SIGNING_ACCOUNT }}
+          SIGNING_PROFILE: ${{ vars.SIGNING_PROFILE }}
+        run: |
+          $settings = @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID',
+                        'SIGNING_ENDPOINT', 'SIGNING_ACCOUNT', 'SIGNING_PROFILE')
+          $missing = $settings | Where-Object { ![Environment]::GetEnvironmentVariable($_) }
+          if ($missing) { throw "Missing Windows signing settings: $($missing -join ', ')." }
       - if: runner.os == 'macOS'
         name: Build macOS media tools
         run: |
@@ -76,49 +100,79 @@ jobs:
           update: true
           install: >-
             curl
-            libarchive
-            mingw-w64-ucrt-x86_64-binutils
+            make
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-pkgconf
       - if: runner.os == 'Windows'
-        name: Prepare Windows media tools and corresponding sources
+        name: Build static Windows import tools
         shell: msys2 {0}
-        run: bash scripts/bundle-windows-player.sh
-      - if: runner.os == 'Windows'
-        name: Smoke test bundled mpv outside MSYS2
-        shell: pwsh
-        timeout-minutes: 2
-        run: |
-          Add-Type -TypeDefinition @'
-          using System.Runtime.InteropServices;
-          public static class WindowsErrorMode {
-              [DllImport("kernel32.dll")]
-              public static extern uint SetErrorMode(uint mode);
-          }
-          '@
-          [void][WindowsErrorMode]::SetErrorMode(0x8003)
-          $player = Resolve-Path src-tauri/resources/mpv.exe
-          $video = Resolve-Path src-tauri/testdata/test-vp9.webm
-          $log = Join-Path $env:RUNNER_TEMP 'junadesk-mpv-smoke.log'
-          $start = [System.Diagnostics.ProcessStartInfo]::new($player.Path)
-          $start.UseShellExecute = $false
-          $start.CreateNoWindow = $true
-          # mpv.exe can default to idle GUI mode when started without a console.
-          $arguments = @('--no-config', '--idle=no', '--force-window=no', '--msg-level=all=v',
-                         '--vo=null', '--ao=null', '--frames=2', "--log-file=$log", $video.Path)
-          foreach ($argument in $arguments) {
-            $start.ArgumentList.Add($argument)
-          }
-          $process = [System.Diagnostics.Process]::Start($start)
-          if (-not $process.WaitForExit(30000)) {
-            $process.Kill($true)
-            if (Test-Path $log) { Get-Content $log -Tail 35 }
-            throw 'Bundled mpv did not exit within 30 seconds.'
-          }
-          if (Test-Path $log) { Get-Content $log -Tail 12 }
-          if ($process.ExitCode -ne 0) { throw "Bundled mpv exited with $($process.ExitCode)" }
-      - name: Build installer
+        run: bash scripts/build-ffmpeg.sh
+      - if: runner.os == 'macOS'
+        name: Build macOS installer
         run: npm run tauri build -- --target ${{ matrix.target }} -- --locked
-      - name: Test packaged media tools
+      - if: runner.os == 'Windows' && inputs.sign_windows
+        name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - if: runner.os == 'Windows' && inputs.sign_windows
+        name: Build signed Windows installer
+        shell: pwsh
+        env:
+          SIGNING_ENDPOINT: ${{ vars.SIGNING_ENDPOINT }}
+          SIGNING_ACCOUNT: ${{ vars.SIGNING_ACCOUNT }}
+          SIGNING_PROFILE: ${{ vars.SIGNING_PROFILE }}
+        run: |
+          $clientVersion = '1.0.128'
+          nuget install Microsoft.ArtifactSigning.Client -Version $clientVersion -OutputDirectory $env:RUNNER_TEMP -Source https://api.nuget.org/v3/index.json -NonInteractive
+          if ($LASTEXITCODE -ne 0) { throw 'Artifact Signing client installation failed.' }
+          $clientDir = Join-Path $env:RUNNER_TEMP "Microsoft.ArtifactSigning.Client.$clientVersion"
+          $env:JUNADESK_SIGNING_DLIB = (Resolve-Path -LiteralPath (Join-Path $clientDir 'bin/x64/Azure.CodeSigning.Dlib.dll')).Path
+          $sdk = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
+          $signTool = Get-ChildItem -LiteralPath $sdk -Directory |
+            Where-Object { $_.Name -match '^10\.0\.\d+\.\d+$' -and (Test-Path (Join-Path $_.FullName 'x64/signtool.exe')) } |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (!$signTool) { throw 'SignTool was not found in the Windows SDK.' }
+          $env:JUNADESK_SIGNTOOL = Join-Path $signTool.FullName 'x64/signtool.exe'
+
+          $env:JUNADESK_SIGNING_METADATA = Join-Path $env:RUNNER_TEMP 'junadesk-signing.json'
+          @{
+            Endpoint = $env:SIGNING_ENDPOINT
+            CodeSigningAccountName = $env:SIGNING_ACCOUNT
+            CertificateProfileName = $env:SIGNING_PROFILE
+            CorrelationId = "JunaDesk-${{ github.run_id }}"
+          } | ConvertTo-Json | Set-Content -LiteralPath $env:JUNADESK_SIGNING_METADATA
+
+          $signScript = (Resolve-Path release-recipes/scripts/sign-windows.ps1).Path
+          $media = Get-ChildItem -LiteralPath src-tauri/resources -Recurse -File |
+            Where-Object { $_.Extension -in '.exe', '.dll' }
+          & $signScript -Path $media.FullName
+
+          $configuration = Join-Path $env:RUNNER_TEMP 'junadesk-tauri-signing.json'
+          @{
+            bundle = @{ windows = @{ signCommand = @{
+              cmd = 'pwsh'
+              args = @('-NoProfile', '-NonInteractive', '-File', $signScript, '%1')
+            } } }
+          } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $configuration
+          npm run tauri build -- --config "$configuration" --target ${{ matrix.target }} -- --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Signed Windows setup build failed.' }
+      - if: ${{ runner.os == 'Windows' && !inputs.sign_windows }}
+        name: Build unsigned Windows installer
+        run: npm run tauri build -- --target ${{ matrix.target }} -- --locked
+      - name: Test playback and packaged media tools
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml -- --include-ignored
+      - if: runner.os == 'Windows'
+        name: Test upgrade, installed files and uninstaller
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $installer = Get-ChildItem src-tauri/target/${{ matrix.target }}/release/bundle/nsis -File -Filter '*-setup.exe'
+          if (@($installer).Count -ne 1) { throw 'Expected a single Windows setup executable.' }
+          & ./release-recipes/scripts/test-windows-installer.ps1 -Installer $installer.FullName
       - name: Collect installer and source archive
         shell: bash
         env:
