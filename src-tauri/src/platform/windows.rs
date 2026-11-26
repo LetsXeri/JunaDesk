@@ -470,7 +470,7 @@ mod tests {
                 0,
                 windows_sys::w!("STATIC"),
                 null(),
-                WS_POPUP,
+                WS_POPUP | WS_VISIBLE,
                 0,
                 0,
                 320,
@@ -492,6 +492,16 @@ mod tests {
             };
             let mut first = child();
             let mut second = child();
+            let anchor_flags = SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW;
+            assert_ne!(
+                SetWindowPos(background.hwnd, HWND_BOTTOM, 0, 0, 0, 0, anchor_flags),
+                0
+            );
+            assert_ne!(
+                SetWindowPos(icons.hwnd, HWND_TOP, 0, 0, 0, 0, anchor_flags),
+                0
+            );
+            assert!(comes_before(icons.hwnd, background.hwnd));
             let monitor = Monitor {
                 width: 100,
                 height: 100,

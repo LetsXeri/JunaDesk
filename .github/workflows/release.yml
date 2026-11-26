@@ -87,7 +87,7 @@ jobs:
         run: |
           npm run build
           if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
-          cargo test --locked --manifest-path src-tauri/Cargo.toml native_player_loads_loops_and_pauses_an_h264_wallpaper
+          cargo test --locked --manifest-path src-tauri/Cargo.toml platform::windows::
       - if: runner.os == 'Windows' && inputs.sign_windows
         name: Check Windows signing configuration
         shell: pwsh
@@ -129,7 +129,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri build -- --config src-tauri/tauri.release.conf.json --target ${{ matrix.target }} -- --locked
+        run: npm run tauri build -- --config src-tauri/tauri.release.conf.json --target ${{ matrix.target }} --bundles app,dmg -- --locked
       - if: runner.os == 'Windows' && inputs.sign_windows
         name: Sign in to Azure with GitHub OIDC
         uses: azure/login@v3
