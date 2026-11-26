@@ -1,20 +1,13 @@
-## JunaDesk 0.1.5 Preview
+## JunaDesk 0.1.6
 
-Importiere animierte MP4-, WebM- und GIF-Dateien und weise sie deinen Bildschirmen zu. JunaDesk läuft über die Menüleiste oder den Infobereich weiter. Vollbild- und Akkupausen sowie Autostart lassen sich in den Einstellungen steuern.
+- **Updates direkt in der App:** JunaDesk zeigt die Versionshinweise vor dem Download. Mit **Update installieren** bestätigst du die signierte Installation und siehst den Fortschritt. Zukünftige stabile Releases mit Update-Paket lassen sich auf diesem Weg installieren.
+- **Windows-Wiedergabe:** JunaDesk positioniert laufende Wallpaper nur bei Bedarf neu. Die App fragt die Monitorkonfiguration seltener vollständig ab und hält die Wiedergabefenster hinter den Desktop-Symbolen.
 
-In dieser Preview:
+### Einmalige Installation
 
-- Windows: Die Wiedergabe erfolgt über Windows Media Foundation. Beim Update werden das bisherige mpv und die zugehörigen Medien-DLLs entfernt. FFmpeg und ffprobe sind statisch gebaut und werden für den Import verwendet.
+Installiere v0.1.6 einmal manuell, um den integrierten Updater zu erhalten.
 
-- Windows: JunaDesk erstellt das Wiedergabefenster mit einer eigenen Fensterklasse und übernimmt dabei den DPI-Modus von Explorer. Meldungen beim Einrichten der Desktop-Ebene enthalten den Win32-Fehlercode.
+- **macOS 14+ mit Apple Silicon:** Öffne die DMG und ziehe JunaDesk in **Programme**. Die App ist ad hoc signiert und ohne Apple-Notarisierung.
+- **Windows 11 ab 24H2 mit x64:** Beende JunaDesk im Infobereich und öffne die Setup-EXE. Wähle beim Upgrade **Do not uninstall**, um die vorhandene Installation zu aktualisieren. Der Installer ist ohne Windows-Authenticode-Signatur.
 
-- Kompaktere Bibliothek mit Suche, Sortierung und Videovorschau. Monitorzuweisungen und Wiedergabestatus sind pro Bildschirm sichtbar.
-- Ruhigere Startanimation beim sichtbaren Kaltstart. Unter macOS bleibt beim Video-Loop das letzte Bild sichtbar, bis das nächste bereitsteht.
-- Update-Hinweise für spätere stabile Releases und optionale Systembenachrichtigungen unter **Einstellungen → Updates**.
-
-### Installation
-
-- **macOS 14 oder neuer mit Apple Silicon:** Lade die DMG, öffne sie und ziehe JunaDesk in den Programme-Ordner. Die App ist ad hoc signiert. Gatekeeper kann den ersten Start blockieren, da Apple die Preview nicht notarisiert hat.
-- **Windows 11 ab 24H2 mit x64-Prozessor:** Lade die Setup-EXE und öffne sie. Wenn du von einer älteren Version aktualisierst, beende JunaDesk im Infobereich und wähle im Setup **Do not uninstall**.
-
-Die Datei `SHA256SUMS.txt` enthält die Prüfsummen für beide Installer und beide Medienquellarchive. Die Archive enthalten den zu den Medienwerkzeugen passenden Quellcode und die Build-Rezepte. JunaDesk selbst steht unter MIT.
+`SHA256SUMS.txt` enthält die Prüfsummen der Downloads. JunaDesk steht unter MIT.

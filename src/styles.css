@@ -187,6 +187,8 @@ select, .field input, .choice-search { background: var(--raised); border: 1px so
 .banner.success { background: #122c2e; border-color: #295d59; color: #bef4e6; }
 .update-banner { border-color: #574d7d; background: #231e3c; }
 .update-banner > svg { color: #cbb9ff; }
+.update-progress { flex: 1 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.update-progress progress { flex: 1; min-width: 90px; accent-color: #a992ff; }
 .spinner { width: 16px; height: 16px; flex: 0 0 16px; border-radius: 50%; border: 2px solid #514975; border-top-color: #c7b5ff; animation: spin .8s linear infinite; }
 
 dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--surface); color: var(--text);
@@ -197,6 +199,14 @@ dialog::backdrop { background: #080b15c7; animation: poster-enter var(--motion-f
 .dialog-heading { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .dialog-heading h2 { overflow-wrap: anywhere; }
 .dialog-subtitle, .delete-copy { color: var(--muted); }
+.release-notes { max-height: min(55vh, 440px); overflow: auto; overflow-wrap: anywhere;
+  padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; line-height: 1.55; }
+.release-notes > :first-child { margin-top: 0; }
+.release-notes > :last-child { margin-bottom: 0; }
+.release-notes :is(h1, h2, h3, h4, h5, h6) { font-size: 1.05rem; margin: 0.85em 0 0.35em; }
+.release-notes :is(p, ul, ol, pre) { margin: 0.55em 0; }
+.release-notes :is(ul, ol) { padding-inline-start: 1.4em; }
+.release-notes pre { white-space: pre-wrap; }
 .field { display: grid; gap: 6px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .detail-preview { display: grid; aspect-ratio: 16 / 9; border: 1px solid var(--border); border-radius: 10px; }

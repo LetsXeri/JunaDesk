@@ -231,7 +231,7 @@ mod tests {
         let path = folder.path().join("Test & Übung #1.mp4");
         std::fs::write(&path, include_bytes!("../../testdata/test-h264.mp4")).unwrap();
         // Use a visible stand-in for Explorer on the Windows CI desktop.
-        let window = SurfaceWindow(unsafe {
+        let window = SurfaceWindow::new(unsafe {
             CreateWindowExW(
                 0,
                 windows_sys::w!("STATIC"),
@@ -247,10 +247,11 @@ mod tests {
                 null(),
             )
         });
-        assert!(!window.0.is_null());
+        assert!(!window.hwnd.is_null());
         let host = Host {
-            parent: window.0,
+            parent: window.hwnd,
             icons: null_mut(),
+            background: null_mut(),
         };
         let monitor = Monitor {
             id: String::new(),

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "JunaDesk",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "identifier": "io.github.letsxeri.junadesk",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,6 +26,13 @@
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost; style-src 'self'; media-src asset: http://asset.localhost; connect-src ipc: http://ipc.localhost",
       "assetProtocol": { "enable": true, "scope": ["$APPLOCALDATA/wallpapers/**"] }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRBQzg1RjMyRjNGNUI3M0QKUldROXQvWHpNbC9JU25ic3Jldk9HaEJnTTJTUnU3alVJbnpCZ0I1U0pISmxzbXJBTE13bWMvVmUK",
+      "requireSignedVersion": true,
+      "windows": { "installMode": "passive" }
     }
   },
   "bundle": {

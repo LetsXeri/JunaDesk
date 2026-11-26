@@ -45,11 +45,19 @@ Nach dem Vorbereiten der Werkzeuge startet `npm run tauri dev` die App. `npm run
 
 ## Updates
 
-Unter **Einstellungen → Updates** findest du die installierte Version und die manuelle Prüfung. JunaDesk fragt standardmäßig einmal täglich die öffentliche GitHub-Schnittstelle nach einem stabilen Release ab. Du kannst die automatische Prüfung abschalten und Systembenachrichtigungen separat einschalten. Der Update-Hinweis führt zum manuellen Download auf GitHub.
+Unter **Einstellungen → Updates** findest du die installierte Version und die manuelle Prüfung. JunaDesk prüft standardmäßig einmal täglich auf neuere stabile GitHub-Releases. Automatische Prüfungen und Systembenachrichtigungen kannst du separat einstellen.
+
+Bei einem Release mit Update-Paket öffnet **Jetzt aktualisieren** zuerst die Versionshinweise. Mit **Update installieren** bestätigst du den Download. JunaDesk prüft anschließend Signatur und Version und startet die Installation. JunaDesk startet nach erfolgreicher Installation neu. Unter Windows kann der Installer kurz seinen Fortschritt anzeigen. **Auf GitHub ansehen** führt zu den Versionshinweisen und dem manuellen Setup. Wer noch eine Version ohne integrierten Updater nutzt, installiert den ersten Build mit Updater einmal manuell.
 
 ## Releases veröffentlichen
 
 Die Versionsnummer in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` und `src-tauri/tauri.conf.json` aktualisieren und einen passenden `v*`-Tag pushen. GitHub Actions erstellt einen Release-Entwurf mit beiden Installern, Medienquellen und Prüfsummen. Für einen vorhandenen Tag lässt sich **Prepare preview** bei Bedarf manuell starten. Die CI prüft den Build. Die Desktop-Integration wird anschließend mit den Installern aus dem Entwurf auf den Zielsystemen abgenommen.
+
+### Signierte Update-Pakete
+
+Der öffentliche Tauri-Signierschlüssel für Updates ist als `pubkey` in `src-tauri/tauri.conf.json` hinterlegt. Im GitHub-Environment `release` benötigt der Workflow den dazugehörigen privaten Schlüssel als Secret `TAURI_SIGNING_PRIVATE_KEY`. Falls der Schlüssel passwortgeschützt ist, kommt `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` hinzu. Bewahre ein geschütztes Backup des Schlüssels auf. Bereits installierte Versionen vertrauen dem darin eingebetteten öffentlichen Schlüssel.
+
+Die Release-Konfiguration erzeugt für Windows eine Signatur zur Setup-EXE und für macOS ein signiertes `.app.tar.gz`. Der Workflow legt beides mit `latest.json` im Entwurf ab. Teste vor der stabilen Freigabe ein Update von einer älteren Version mit integriertem Updater auf beiden Systemen. Tauri-Updatesignaturen sind unabhängig von Windows Authenticode. [Tauri-Updater-Dokumentation](https://v2.tauri.app/plugin/updater/)
 
 - Systemhintergrund wiederherstellen können. Wallpaper hinter anklickbaren Icons und normalen Fenstern anzeigen. Verwaltung schließen, im Tray erneut öffnen und über **Beenden** vollständig stoppen.
 - MP4, WebM und GIF zusammen mit einer fehlerhaften Datei importieren. Vorschau, Umbenennen und Löschen eines zugewiesenen Wallpapers prüfen.

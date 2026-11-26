@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
+import Markdown from "react-markdown";
 import brand from "./brand.png";
 import aurora from "./aurora.jpg";
 import "./styles.css";
@@ -13,13 +14,16 @@ type Monitor = { id: string; name: string; width: number; height: number; x: num
 type Settings = { fullscreenPause: boolean; batteryPause: boolean; autostart: boolean; fps: 15 | 30 | null };
 type Status = { monitors: Monitor[]; onBattery: boolean; manualPause: boolean; errors: Record<string, string>; pauseReasons: Record<string, string>; desktopError: string | null; hasBattery?: boolean | null; readyWallpapers?: Record<string, string> };
 type Snapshot = { library: { wallpapers: Wallpaper[]; assignments: Record<string, string>; displayNames: Record<string, string>; settings: Settings }; status: Status; previews: Record<string, string> };
-type UpdateStatus = { installedVersion: string; availableVersion: string | null; automaticChecks: boolean; systemNotifications: boolean; checking: boolean };
+type UpdateStatus = { installedVersion: string; availableVersion: string | null; releaseNotes: string | null; automaticChecks: boolean; systemNotifications: boolean; checking: boolean; installing: boolean; installable: boolean };
+type UpdateProgress = { phase: "preparing" | "verifying" | "installing" }
+  | { phase: "downloading"; downloaded: number; total: number | null };
 type UpdateOption = "automaticChecks" | "systemNotifications";
 type ImportResult = { file: string; error: string | null };
 type Page = "Bibliothek" | "Monitore" | "Einstellungen";
 type IconName = "library" | "monitor" | "settings" | "plus" | "upload" | "edit" | "trash" | "play" | "close" | "check" | "info" | "search" | "image" | "power" | "download";
 type Modal = { kind: "assign" | "rename" | "delete" | "preview"; item: Wallpaper }
-  | { kind: "monitor"; monitor: Monitor };
+  | { kind: "monitor"; monitor: Monitor }
+  | { kind: "update"; version: string; notes: string | null };
 type DisplayState = { tone: "active" | "paused" | "error" | "idle"; label: string; detail?: string };
 
 function displayState(status: Status, id: string, wallpaperId: string | undefined, pending: string | null): DisplayState {
@@ -82,6 +86,7 @@ function App() {
   const [updates, setUpdates] = useState<UpdateStatus>();
   const [updateFeedback, setUpdateFeedback] = useState<{ text: string; error?: boolean }>();
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress>();
   const [startupError, setStartupError] = useState("");
   const [notice, setNotice] = useState<{ text: string; error?: boolean }>();
   const [modal, setModal] = useState<Modal>();
@@ -273,6 +278,21 @@ function App() {
     }
   }
 
+  async function installUpdate(version: string) {
+    if (updates?.availableVersion !== version || !updates.installable || updateProgress || updates.installing || updates.checking) return;
+    setNotice(undefined);
+    setUpdateFeedback(undefined);
+    setUpdateProgress({ phase: "preparing" });
+    const progress = new Channel<UpdateProgress>(setUpdateProgress);
+    try {
+      await invoke("install_update", { version, progress });
+    } catch (error) {
+      setNotice({ text: errorText(error), error: true });
+      setUpdateProgress(undefined);
+      await refreshUpdates();
+    }
+  }
+
   async function chooseFiles() {
     try {
       const paths = await open({
@@ -301,6 +321,7 @@ function App() {
     : activeCount ? `${activeCount} ${activeCount === 1 ? "aktiver Bildschirm" : "aktive Bildschirme"}`
     : `${attached.length} ${attached.length === 1 ? "Zuweisung" : "Zuweisungen"}`;
   const filter = query.trim().toLocaleLowerCase("de");
+  const offeredVersion = updates?.availableVersion;
   const visibleItems = items.filter(({ name, extension }) =>
     name.toLocaleLowerCase("de").includes(filter) || extension.includes(filter)
   );
@@ -368,10 +389,14 @@ function App() {
           onClick={() => void chooseFiles()}><Icon name="plus" size={18} />Hinzufügen</button>}
       </header>
 
-      {updates?.availableVersion && <div className="banner update-banner">
+      {updates && offeredVersion && <div className="banner update-banner">
         <Icon name="download" />
-        <strong role="status">JunaDesk {updates.availableVersion} ist verfügbar</strong>
+        <strong role="status">JunaDesk {offeredVersion} ist verfügbar</strong>
+        {updates.installable && <button className="button primary"
+          disabled={!!busy || updateBusy || updates.checking || updates.installing || !!updateProgress}
+          onClick={() => showModal({ kind: "update", version: offeredVersion, notes: updates.releaseNotes })}>Jetzt aktualisieren</button>}
         <button className="button secondary" onClick={() => void openUpdateRelease()}>Auf GitHub ansehen</button>
+        {(updateProgress || updates.installing) && <UpdateInstallationProgress progress={updateProgress} />}
       </div>}
       {startupError && <div className="banner error" role="alert"><Icon name="info" /><span>{startupError}</span>
         <button className="button secondary" onClick={() => void refresh()}>Erneut versuchen</button></div>}
@@ -491,23 +516,30 @@ function App() {
           <h2 id="updates-heading"><span className="settings-icon"><Icon name="download" size={18} /></span>Updates</h2>
           <div className="setting-row update-version">
             <span><strong>Installierte Version</strong><small>{updates?.installedVersion ?? "Wird geladen …"}</small></span>
-            <button className="button secondary" disabled={!updates || updateBusy || updates.checking}
+            <button className="button secondary" disabled={!updates || updateBusy || updates.checking || updates.installing || !!updateProgress}
               onClick={() => void changeUpdateSettings()}>{updates?.checking ? "Wird geprüft …" : "Jetzt prüfen"}</button>
           </div>
           {updateFeedback && <div className={updateFeedback.error ? "banner error" : "banner success"} role={updateFeedback.error ? "alert" : "status"}>
             <Icon name={updateFeedback.error ? "info" : "check"} />{updateFeedback.text}
           </div>}
           <Setting title="Automatisch nach Updates suchen" description="JunaDesk prüft einmal täglich auf GitHub, ob eine stabile Version vorliegt."
-            checked={updates?.automaticChecks ?? false} disabled={!updates || updateBusy}
+            checked={updates?.automaticChecks ?? false} disabled={!updates || updateBusy || updates.installing}
             onChange={(enabled) => void changeUpdateSettings("automaticChecks", enabled)} />
           <Setting title="Systembenachrichtigungen" description="Ein Hinweis pro neuer Version, auch bei geschlossenem JunaDesk-Fenster."
-            checked={updates?.systemNotifications ?? false} disabled={!updates || updateBusy}
+            checked={updates?.systemNotifications ?? false} disabled={!updates || updateBusy || updates.installing}
             onChange={(enabled) => void changeUpdateSettings("systemNotifications", enabled)} />
         </section>
       </div>}
 
       </div>
-      {modal && (modal.kind === "monitor" ? <MonitorDialog key={modal.monitor.id}
+      {modal && (modal.kind === "update" ? <UpdateDialog version={modal.version} notes={modal.notes}
+        available={updates?.availableVersion === modal.version && updates.installable}
+        busy={!!busy || !!updates?.checking || !!updates?.installing}
+        onClose={closeModal} onConfirm={() => {
+          closeModal();
+          void installUpdate(modal.version);
+        }} /> :
+        modal.kind === "monitor" ? <MonitorDialog key={modal.monitor.id}
         monitor={modal.monitor} connected={monitors.some(({ id }) => id === modal.monitor.id)}
         items={items} previewFor={previewFor} assignment={library?.assignments[modal.monitor.id]}
         disabled={!!busy} error={notice?.error ? notice.text : undefined} onClose={closeModal}
@@ -589,6 +621,21 @@ function Dialog({ title, onClose, busy = false, wide = false, children }: {
       <button className="icon-button" aria-label="Dialog schließen" disabled={busy} onClick={onClose}><Icon name="close" size={18} /></button></div>
     {children}
   </dialog>;
+}
+
+function UpdateDialog({ version, notes, available, busy, onClose, onConfirm }: {
+  version: string; notes: string | null; available: boolean; busy: boolean; onClose: () => void; onConfirm: () => void;
+}) {
+  return <Dialog title={`Neu in JunaDesk ${version}`} onClose={onClose} wide>
+    {notes ? <div className="release-notes" tabIndex={0} role="region" aria-label="Versionshinweise">
+      <Markdown skipHtml disallowedElements={["a", "img"]} unwrapDisallowed>{notes}</Markdown>
+    </div> : <p className="dialog-subtitle">Keine Versionshinweise verfügbar.</p>}
+    {!available && <p role="status" className="dialog-subtitle">Das angebotene Update hat sich geändert.</p>}
+    <div className="modal-actions">
+      <button className="button secondary" onClick={onClose}>Abbrechen</button>
+      <button className="button primary" disabled={!available || busy} onClick={onConfirm}>Update installieren</button>
+    </div>
+  </Dialog>;
 }
 
 function PreviewDialog({ item, poster, assignedNames, disabled, canAssign, onClose, onAction }: {
@@ -682,6 +729,19 @@ function MonitorDialog({ monitor, connected, items, previewFor, assignment, disa
       </div>
     </form>
   </Dialog>;
+}
+
+function UpdateInstallationProgress({ progress }: { progress?: UpdateProgress }) {
+  const download = progress?.phase === "downloading" ? progress : undefined;
+  const fraction = download?.total ? Math.min(1, download.downloaded / download.total) : undefined;
+  const label = progress?.phase === "verifying" ? "Signatur wird geprüft …"
+    : progress?.phase === "installing" ? "Update wird installiert …"
+    : download ? "Update wird heruntergeladen …" : "Update wird vorbereitet …";
+  return <div className="update-progress">
+    <span role="status">{label}</span>
+    {download && <progress aria-label="Downloadfortschritt" max={1} value={fraction} />}
+    {fraction !== undefined && <span aria-hidden="true">{Math.round(fraction * 100)} %</span>}
+  </div>;
 }
 
 function Setting({ title, description, checked, disabled, onChange }: {

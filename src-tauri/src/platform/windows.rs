@@ -26,6 +26,8 @@ pub struct Desktop {
     errors: BTreeMap<String, String>,
     retries: BTreeMap<String, (PathBuf, Instant)>,
     next_attach: Instant,
+    last_display_scan: Option<Instant>,
+    last_fullscreen_scan: Option<Instant>,
     runtime: Result<MediaRuntime>,
 }
 
@@ -33,6 +35,7 @@ pub struct Desktop {
 struct Host {
     parent: HWND,
     icons: HWND,
+    background: HWND,
 }
 
 struct Surface {
@@ -40,14 +43,84 @@ struct Surface {
     window: SurfaceWindow,
     video: Playback,
     ready: bool,
-    visible: bool,
 }
 
-struct SurfaceWindow(HWND);
+struct SurfaceWindow {
+    hwnd: HWND,
+    bounds: Option<[i32; 4]>,
+}
+
+impl SurfaceWindow {
+    fn new(hwnd: HWND) -> Self {
+        Self { hwnd, bounds: None }
+    }
+
+    fn place(&mut self, host: Host, monitor: &Monitor, ready: bool) -> Result<()> {
+        unsafe {
+            let mut point = POINT {
+                x: monitor.x,
+                y: monitor.y,
+            };
+            MapWindowPoints(null_mut(), host.parent, &mut point, 1);
+            let bounds = [
+                point.x,
+                point.y,
+                monitor.width as i32,
+                monitor.height as i32,
+            ];
+            let geometry_changed = self.bounds != Some(bounds);
+            let show = ready && GetWindowLongW(self.hwnd, GWL_STYLE) as u32 & WS_VISIBLE == 0;
+            // All monitor windows may share the space between the icons and WorkerW.
+            // Do not move each of them to the front of that space on every poll.
+            let reorder = self.bounds.is_none()
+                || (!host.icons.is_null()
+                    && (!comes_before(host.icons, self.hwnd)
+                        || !comes_before(self.hwnd, host.background)));
+            if !geometry_changed && !show && !reorder {
+                return Ok(());
+            }
+            let after = if host.icons.is_null() {
+                HWND_BOTTOM
+            } else {
+                host.icons
+            };
+            let mut flags = SWP_NOACTIVATE;
+            if !geometry_changed {
+                flags |= SWP_NOMOVE | SWP_NOSIZE;
+            }
+            if !reorder {
+                flags |= SWP_NOZORDER;
+            }
+            if show {
+                flags |= SWP_SHOWWINDOW;
+            }
+            let [x, y, width, height] = bounds;
+            if SetWindowPos(self.hwnd, after, x, y, width, height, flags) == 0 {
+                return Err(window_error(
+                    "Die Explorer-Desktop-Ebene konnte nicht aktualisiert werden.",
+                    GetLastError(),
+                ));
+            }
+            self.bounds = Some(bounds);
+        }
+        Ok(())
+    }
+}
+
+unsafe fn comes_before(window: HWND, other: HWND) -> bool {
+    let mut previous = GetWindow(other, GW_HWNDPREV);
+    while !previous.is_null() {
+        if previous == window {
+            return true;
+        }
+        previous = GetWindow(previous, GW_HWNDPREV);
+    }
+    false
+}
 
 impl Drop for SurfaceWindow {
     fn drop(&mut self) {
-        unsafe { DestroyWindow(self.0) };
+        unsafe { DestroyWindow(self.hwnd) };
     }
 }
 
@@ -69,6 +142,8 @@ impl Desktop {
             errors: BTreeMap::new(),
             retries: BTreeMap::new(),
             next_attach: Instant::now(),
+            last_display_scan: None,
+            last_fullscreen_scan: None,
             runtime: MediaRuntime::start(),
         }
     }
@@ -81,9 +156,32 @@ impl Desktop {
                 DispatchMessageW(&message);
             }
         }
-        self.monitors = monitors();
+        let now = Instant::now();
+        if self
+            .last_display_scan
+            .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(2))
+        {
+            self.monitors = monitors();
+            self.last_display_scan = Some(now);
+            self.last_fullscreen_scan = None;
+        }
         if self.monitors.is_empty() {
             return Err("Windows meldet keine verfügbaren Bildschirme.".into());
+        }
+        if self
+            .last_fullscreen_scan
+            .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(500))
+        {
+            for monitor in &mut self.monitors {
+                let rect = RECT {
+                    left: monitor.x,
+                    top: monitor.y,
+                    right: monitor.x + monitor.width as i32,
+                    bottom: monitor.y + monitor.height as i32,
+                };
+                monitor.fullscreen = unsafe { fullscreen(&rect) };
+            }
+            self.last_fullscreen_scan = Some(now);
         }
         let mut power: SYSTEM_POWER_STATUS = unsafe { zeroed() };
         let power_available = unsafe { GetSystemPowerStatus(&mut power) != 0 };
@@ -119,7 +217,9 @@ impl Desktop {
         }
         self.runtime.as_ref().map_err(Clone::clone)?;
         if self.host.is_some_and(|host| unsafe {
-            IsWindow(host.parent) == 0 || (!host.icons.is_null() && IsWindow(host.icons) == 0)
+            IsWindow(host.parent) == 0
+                || (!host.icons.is_null() && IsWindow(host.icons) == 0)
+                || (!host.background.is_null() && IsWindow(host.background) == 0)
         }) {
             self.surfaces.clear();
             self.host = None;
@@ -184,6 +284,7 @@ unsafe fn desktop_host() -> Option<Host> {
         return Some(Host {
             parent: progman,
             icons,
+            background,
         });
     }
 
@@ -210,6 +311,7 @@ unsafe fn desktop_host() -> Option<Host> {
                 *(data as *mut Option<Host>) = Some(Host {
                     parent: background,
                     icons: null_mut(),
+                    background: null_mut(),
                 });
                 return 0;
             }
@@ -307,57 +409,36 @@ fn create_surface_window(parent: HWND, layered: bool, width: i32, height: i32) -
 
 impl Surface {
     fn new(host: Host, monitor: &Monitor, video: &Playback) -> Result<Self> {
-        let window = SurfaceWindow(create_surface_window(
+        let window = SurfaceWindow::new(create_surface_window(
             host.parent,
             !host.icons.is_null(),
             monitor.width as i32,
             monitor.height as i32,
         )?);
-        let player = Player::new(windows::Win32::Foundation::HWND(window.0), &video.path)?;
+        let player = Player::new(windows::Win32::Foundation::HWND(window.hwnd), &video.path)?;
         let mut surface = Self {
             player,
             window,
             video: video.clone(),
             ready: false,
-            visible: false,
         };
         surface.update(host, monitor, video)?;
         Ok(surface)
     }
 
     fn update(&mut self, host: Host, monitor: &Monitor, video: &Playback) -> Result<()> {
-        unsafe {
-            let hwnd = self.window.0;
-            if IsWindow(hwnd) == 0 {
-                return Err("Windows hat das Wiedergabefenster geschlossen.".into());
-            }
-            let mut point = POINT {
-                x: monitor.x,
-                y: monitor.y,
-            };
-            MapWindowPoints(null_mut(), host.parent, &mut point, 1);
-            let after = if host.icons.is_null() {
-                HWND_BOTTOM
-            } else {
-                host.icons
-            };
-            let (width, height) = (monitor.width as i32, monitor.height as i32);
-            self.ready = self.player.update(video.paused, width, height)?;
-            self.video.paused = video.paused;
-            let flags = SWP_NOACTIVATE
-                | if self.ready && !self.visible {
-                    SWP_SHOWWINDOW
-                } else {
-                    0
-                };
-            if SetWindowPos(hwnd, after, point.x, point.y, width, height, flags) == 0 {
-                return Err(window_error(
-                    "Die Explorer-Desktop-Ebene konnte nicht aktualisiert werden.",
-                    GetLastError(),
-                ));
-            }
-            self.visible |= self.ready;
+        if unsafe { IsWindow(self.window.hwnd) == 0 } {
+            return Err("Windows hat das Wiedergabefenster geschlossen.".into());
         }
+        self.window.place(host, monitor, self.ready)?;
+        let was_ready = self.ready;
+        self.ready =
+            self.player
+                .update(video.paused, monitor.width as i32, monitor.height as i32)?;
+        if self.ready && !was_ready {
+            self.window.place(host, monitor, true)?;
+        }
+        self.video.paused = video.paused;
         Ok(())
     }
 }
@@ -365,6 +446,98 @@ impl Surface {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn unchanged_wallpaper_windows_are_not_repositioned() {
+        thread_local! {
+            static POSITION_CHANGES: Cell<usize> = const { Cell::new(0) };
+        }
+        unsafe extern "system" fn track_position(
+            hwnd: HWND,
+            message: u32,
+            wparam: WPARAM,
+            lparam: LPARAM,
+        ) -> LRESULT {
+            if message == WM_WINDOWPOSCHANGING {
+                POSITION_CHANGES.with(|count| count.set(count.get() + 1));
+            }
+            DefWindowProcW(hwnd, message, wparam, lparam)
+        }
+
+        unsafe {
+            let parent = SurfaceWindow::new(CreateWindowExW(
+                0,
+                windows_sys::w!("STATIC"),
+                null(),
+                WS_POPUP,
+                0,
+                0,
+                320,
+                240,
+                null_mut(),
+                null_mut(),
+                GetModuleHandleW(null()),
+                null(),
+            ));
+            assert!(!parent.hwnd.is_null());
+            let child =
+                || SurfaceWindow::new(create_surface_window(parent.hwnd, false, 100, 100).unwrap());
+            let background = child();
+            let icons = child();
+            let host = Host {
+                parent: parent.hwnd,
+                icons: icons.hwnd,
+                background: background.hwnd,
+            };
+            let mut first = child();
+            let mut second = child();
+            let monitor = Monitor {
+                width: 100,
+                height: 100,
+                ..Monitor::default()
+            };
+            SetWindowLongPtrW(
+                first.hwnd,
+                GWLP_WNDPROC,
+                track_position as *const () as isize,
+            );
+            first.place(host, &monitor, true).unwrap();
+            second.place(host, &monitor, true).unwrap();
+            assert!(comes_before(second.hwnd, first.hwnd));
+            assert!(comes_before(first.hwnd, background.hwnd));
+
+            POSITION_CHANGES.with(|count| count.set(0));
+            first.place(host, &monitor, true).unwrap();
+            second.place(host, &monitor, true).unwrap();
+            assert_eq!(POSITION_CHANGES.with(Cell::get), 0);
+            assert!(comes_before(second.hwnd, first.hwnd));
+
+            let resized = Monitor {
+                width: 200,
+                ..monitor.clone()
+            };
+            first.place(host, &resized, true).unwrap();
+            assert_eq!(POSITION_CHANGES.with(Cell::get), 1);
+            assert!(comes_before(second.hwnd, first.hwnd));
+
+            assert_ne!(
+                SetWindowPos(
+                    first.hwnd,
+                    HWND_BOTTOM,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE
+                ),
+                0
+            );
+            first.place(host, &resized, true).unwrap();
+            assert!(comes_before(icons.hwnd, first.hwnd));
+            assert!(comes_before(first.hwnd, background.hwnd));
+        }
+    }
 
     #[test]
     fn creates_a_layered_child_in_the_parent_dpi_context() {
@@ -440,7 +613,7 @@ fn monitors() -> Vec<Monitor> {
                 x: rect.left,
                 y: rect.top,
                 primary: info.monitorInfo.dwFlags & MONITORINFOF_PRIMARY != 0,
-                fullscreen: fullscreen(&rect),
+                fullscreen: false,
             });
         }
         1

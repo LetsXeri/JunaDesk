@@ -441,6 +441,7 @@ fn main() {
     #[cfg(not(target_os = "macos"))]
     let builder = builder.plugin(tauri_plugin_notification::init());
     let app = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--background"]),
@@ -460,6 +461,7 @@ fn main() {
             updates::check_updates,
             updates::set_update_option,
             updates::open_update_release,
+            updates::install_update,
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
